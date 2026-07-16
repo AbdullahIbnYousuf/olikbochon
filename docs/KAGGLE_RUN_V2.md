@@ -1,5 +1,13 @@
 # Run TF-IDF Baseline Version 2 on Kaggle
 
+## Recorded outcome
+
+The real Version 2 Kaggle run completed successfully. It trained the final model on 5,299 unique labeled rows and submitted `submission.csv` at threshold 0.50. The public leaderboard score was **0.426**, which is **0.040 below** Version 1's **0.466**.
+
+The end-to-end pipeline worked, including file-role discovery, safe audits, offline model fitting, test inference, submission validation, and submission. The lower score is a useful negative experiment, not an implementation failure. It supports the previously observed domain mismatch and shows that adding the public labeled data did not improve leaderboard performance.
+
+Version 1 remains the current best scored submission. Version 2 should not currently be selected as the final scored submission, and repeated TF-IDF threshold probing is not recommended. A future Version 3 should investigate a stronger context-aware or multilingual transformer model; no Version 3 work is part of this run record.
+
 ## Inputs
 
 1. Import `notebooks/generated/tfidf_baseline_v2.ipynb` into a new Kaggle notebook.
@@ -32,7 +40,7 @@ The notebook independently validates and writes:
 
 No class-0 experimental output is created. Check only aggregate shape, exact columns, label domain, ID-order validation status, and label counts. Never display submission rows, IDs, individual predictions, or test text.
 
-Submit `submission.csv` as the default Version 2 result. Record the saved notebook version, Git commit, CPU runtime, selected threshold, and Kaggle score without committing the submission file. A single leaderboard result is a pipeline observation, not a basis for repeated threshold probing.
+For reproducing the recorded Version 2 experiment, `submission.csv` is the selected-threshold output. Record the saved notebook version, Git commit, CPU runtime, selected threshold, and Kaggle score without committing the submission file. Do not use repeated submissions to probe alternative TF-IDF thresholds.
 
 ## Accepted limitation
 

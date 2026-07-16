@@ -1,6 +1,6 @@
 # অলীকবচন — Local Competition Workspace
 
-Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 is a completed offline TF-IDF baseline: its Kaggle CPU run finished in 53 seconds with internet disabled, and the validated `macro_f1_oof` submission at threshold 0.53 scored 0.466 on the public leaderboard. This single score confirms the pipeline works but is not evidence that the model is good or bad. Version 2 has not started.
+Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 remains the current best offline TF-IDF baseline at **0.466** on the public leaderboard. Version 2 completed the full Kaggle pipeline successfully using 5,299 unique labeled rows and threshold 0.50, but scored **0.426**, or 0.040 lower than Version 1. This useful negative experiment supports a public-to-competition domain mismatch: more labeled data did not improve leaderboard performance, so Version 2 is not the current final-submission choice and repeated TF-IDF threshold probing is not recommended.
 
 ## Directory layout
 

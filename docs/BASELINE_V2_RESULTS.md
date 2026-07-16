@@ -15,6 +15,19 @@ The exact and near-duplicate gates passed with zero removals. Counts were theref
 
 Full filenames, hashes, distributions, fingerprint definitions, and similarity results are in `docs/V2_DATA_AUDIT.md`.
 
+## Confirmed Kaggle execution
+
+The Version 2 notebook completed successfully on Kaggle and produced a valid end-to-end submission from all 5,299 unique labeled rows. The submitted `submission.csv` used the frozen threshold **0.50** and received a public leaderboard score of **0.426**.
+
+This was a technically successful run: labeled-data discovery, safety audits, final training, competition-test inference, submission creation, validation, and Kaggle submission all worked. The result is a useful negative experiment rather than an implementation failure.
+
+| Version | Public score | Difference from Version 1 | Current selection status |
+|---|---:|---:|---|
+| Version 1 | **0.466** | — | Current best TF-IDF submission |
+| Version 2 | 0.426 | -0.040 | Do not currently select as the final scored submission |
+
+Adding the approved public labeled data did not improve leaderboard performance. Together with the weaker independent official-sample result below, the public score supports the previously observed public-to-competition domain mismatch. One score cannot isolate every cause, but it provides no reason to prefer Version 2 over Version 1 or to probe more TF-IDF thresholds on the public leaderboard.
+
 ## Locked model
 
 - Marked text: `__PROMPT__`, `__CONTEXT_PRESENT__`, `__CONTEXT__`, `__RESPONSE__`.
@@ -55,7 +68,7 @@ No official prediction set exceeded the 90% collapse-warning limit.
 
 ## Comparison with Version 1
 
-Version 1's official-sample fixed-0.50 OOF macro F1 was 0.520686; its full-OOF macro-selected tuning estimate was 0.524823. Version 2's independent official-sample macro F1 is 0.437391. This is not a perfectly identical comparison: Version 1 used official-sample cross-validation, whereas Version 2 fits on separate public data and treats the official sample as a domain holdout. The lower V2 result is evidence of a public-to-official distribution or task mismatch, not a reason to tune on the official sample or public leaderboard.
+Version 1's official-sample fixed-0.50 OOF macro F1 was 0.520686; its full-OOF macro-selected tuning estimate was 0.524823. Version 2's independent official-sample macro F1 is 0.437391. This is not a perfectly identical comparison: Version 1 used official-sample cross-validation, whereas Version 2 fits on separate public data and treats the official sample as a domain holdout. The lower V2 result anticipated the confirmed leaderboard direction: Version 2 scored 0.426, which is 0.040 below Version 1's 0.466. The evidence supports a public-to-official distribution or task mismatch, not tuning on the official sample or public leaderboard.
 
 ## Runtime and environment
 
@@ -69,6 +82,10 @@ Version 1's official-sample fixed-0.50 OOF macro F1 was 0.520686; its full-OOF m
 ## Final-refit calibration limitation
 
 The threshold remains fixed at 0.50 after selection. The final Kaggle model is refitted on all 5,299 unique allowed rows, including the former validation and official rows. Adding these rows can shift probability calibration, so the frozen threshold may be slightly less optimal for the final refitted model. Version 2 accepts this limitation and introduces no second tuning stage. Kaggle scores must not be used for repeated threshold probing.
+
+## Recommendation
+
+Keep Version 1 as the current best scored baseline and do not select Version 2 as the final scored submission. Repeated threshold probing within the same TF-IDF family is not recommended. A future Version 3 should investigate a stronger context-aware or multilingual transformer model under the existing offline, licensing, leakage, runtime, and artifact-size constraints.
 
 ## Safety confirmations
 
