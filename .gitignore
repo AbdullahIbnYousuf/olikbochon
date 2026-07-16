@@ -1,0 +1,36 @@
+.venv/
+data/
+outputs/
+.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+*.zip
+*.csv
+*.jsonl
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.safetensors
+kaggle.json
+access_token
+.env
+.env.*
+!.env.example
+
+# Competition artifacts and generated predictions
+submission*.csv
+*submission*.csv
+predictions/
+checkpoints/
+models/
+wandb/
+mlruns/
+
+# Local tooling
+.pytest_cache/
+.ruff_cache/
+.jupyter/
+.idea/
+.vscode/
+
