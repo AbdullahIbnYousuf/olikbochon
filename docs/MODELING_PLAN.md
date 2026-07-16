@@ -183,3 +183,11 @@ Implement a **balanced logistic-regression classifier over combined word and cha
 - **Expected files:** reusable modules under `src/olikbochon/`; synthetic tests under `tests/`; canonical Jupytext source plus a clean generated notebook under `notebooks/generated/`; `docs/BASELINE_V1_RESULTS.md`; and `docs/KAGGLE_RUN_V1.md`. The notebook source is canonical and the `.ipynb` is generated from it.
 - **Expected runtime:** under 5 minutes on a normal CPU for the current official sample; comfortably under Kaggle limits.
 - **Success criteria:** deterministic reruns; no fold or convergence failures; explicit comparison against constant-label and majority baselines; no silent predicted-class collapse; stable fold scores without obvious leakage; all three exact validated `id,label` variants in synthetic fixtures; zero network/model-download calls; and all tests plus setup verification passing. Kaggle generation is now authorized only through the guarded `/kaggle/input` path; local execution must never open the real test CSV.
+
+## Version 2 fixed-data experiment
+
+Version 2 keeps the exact Version 1 model and preprocessing. It uses `bangla_hallucination_5k_train.json` for development fitting, `bangla_hallucination_5k_validation.json` for one macro-F1 threshold selection, and the official labeled sample as an untouched independent evaluation set. The 5k aggregate is audit-only. The resource is identified as `abidur14004/new-dataset` and approved by the user for this university event; incomplete provenance/license metadata remains documented.
+
+Two SHA-256 keys protect data roles: a text-only normalized field fingerprint detects overlaps and label conflicts, while a label-inclusive fingerprint detects complete row duplicates. A pre-model character-TF-IDF near-duplicate audit protects both public validation and official evaluation. Public-root CSVs are quarantined, and competition inference requires a separate coherent root.
+
+Only the public validation split selects the threshold. Its selected score is a tuning estimate. The official score is independent and cannot alter the model or threshold. After recording evaluation, the final model uses all unique allowed rows while retaining the frozen threshold. The accepted calibration-shift limitation is not corrected with a second tuning stage or leaderboard probing.

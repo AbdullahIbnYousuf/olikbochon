@@ -82,7 +82,11 @@ Authoritative sources—the official rulebook and starter notebook—define `0 =
 
 The public Kaggle metadata for `abidur14004/new-dataset` has an empty description, no label documentation, and an `unknown` license. There is no exact overlap between its distinct 5,000 records and the official labeled sample, so labels cannot be cross-verified record-for-record. One public labeled training example from each class was inspected solely to resolve direction; both were clearly consistent with the official meaning, and the overlapping public train/validation/aggregate files have no label conflicts.
 
-Conclusion: the public labels are empirically consistent with the official direction but not formally documented. Treat the dataset as provisional. Do not use it for a competition model until the team confirms its provenance, permission, citation, and license with the dataset owner or organizers.
+Conclusion: the public labels are empirically consistent with the official direction but not formally documented. The prior use gate was unresolved. For Version 2, the user approved the labeled files for this university event under dataset identifier `abidur14004/new-dataset`. This approval permits the scoped experiment but does not resolve the remaining provenance, citation, or unknown-license documentation uncertainty.
+
+## Version 2 near-duplicate update
+
+Version 2 rechecked exact fingerprints and added a deterministic cross-partition `char_wb` TF-IDF 3–5 gram audit with cosine threshold 0.97 and length-ratio threshold 0.90. Public train versus validation produced zero flagged pairs (maximum 0.964740). Combined public versus official produced zero flagged pairs (maximum 0.568418). No label conflicts or holdout-protection removals occurred. Full aggregate-only results are recorded in `docs/V2_DATA_AUDIT.md`.
 
 ## Competition test metadata only
 
@@ -109,7 +113,7 @@ The official sample has 2,516 rows and exactly `id,label` in that order. Both co
 | Source | Decision now | Reason |
 |---|---|---|
 | Official competition sample | Approved for development | Official, documented labels. |
-| Public 5k aggregate | Blocked pending confirmation | Label direction only empirically supported; license is unknown. |
-| Public 4k/1k split | Blocked pending confirmation | Same records as aggregate; same provenance/license issue. |
+| Public 5k aggregate | Audit-only in Version 2 | User-approved for this university event, but the aggregate duplicates the selected 4k/1k roles and must never be fitted alongside them; provenance/license documentation remains incomplete. |
+| Public 4k/1k split | Approved for Version 2 | User-approved for this university event. Use 4k for development and 1k for threshold selection; cite `abidur14004/new-dataset`; retain the provenance/license caveat. |
 | Public copy of official sample | Exclude | Exact duplicate. |
 | Public copy of competition test | Permanently exclude | Exact official-test duplicate; leakage and rules risk. |

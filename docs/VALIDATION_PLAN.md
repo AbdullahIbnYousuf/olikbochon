@@ -122,3 +122,14 @@ Promote a candidate only when gains appear across folds/seeds and both context r
 - Accept `sample submission.csv` first and `sample_submission.csv` second. Hash same-named duplicates; accept only byte-identical copies and choose deterministically.
 - Treat `notebooks/generated/tfidf_baseline_v1.py` as canonical and generate the clean `.ipynb` with Jupytext.
 - Scan executable notebook content for forbidden behavior without rejecting explanatory Markdown.
+
+## Version 2 public-split contract
+
+- Fit the unchanged model on the approved public 4k split and select one macro-F1 threshold on the public 1k split.
+- Call the selected public score `Public-validation threshold-tuning estimate`; it is not independent.
+- Keep the official labeled sample untouched until `Independent official-sample evaluation`, then apply fixed 0.50 and the already frozen selected threshold.
+- Use a text-only normalized fingerprint for overlap/conflict detection and a label-inclusive fingerprint for complete-row deduplication.
+- Before modeling, audit character-TF-IDF near duplicates across public train/validation and combined public/official at cosine 0.97 plus length ratio 0.90. Stop on conflicts, more than 1% affected validation rows, or more than 1% affected official rows.
+- Preserve holdout rows and remove only lower-precedence public rows when a small passing set of same-label near duplicates exists.
+- After evaluation, refit on every unique allowed row. Do not retune the threshold even though adding validation/official rows may shift calibration.
+- Quarantine all CSVs below directories containing the public 4k/1k files. Resolve test inference only from a separate root co-locating the official sample, test, and sample submission.
