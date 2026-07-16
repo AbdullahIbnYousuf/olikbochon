@@ -8,6 +8,14 @@ Use the generated notebook:
 
 The canonical reviewable source is `notebooks/generated/tfidf_baseline_v1.py`. Do not upload or execute the original starter notebook for this run.
 
+## Confirmed Version 1 run
+
+The `tfidf-baseline-v1` notebook was imported into Kaggle and completed a fresh **Save & Run All** on CPU with internet disabled and the competition input attached. Kaggle reported **53 seconds** runtime. The run observed 299 official labeled rows and used only that official sample for Version 1 training.
+
+`submission.csv` was submitted using `macro_f1_oof` threshold **0.53**. Submission creation and all format checks succeeded, and the public leaderboard score was **0.466**. Kaggle displayed it as the current best score at submission time. The fixed-0.50 and class-0 experimental files were not submitted.
+
+This result confirms that the complete offline pipeline works on Kaggle; it is only the first public-leaderboard baseline. Do not infer model quality from one submission and do not probe thresholds through the public leaderboard. No external API or model download was used. The provided 5,000-row labeled dataset is approved starting with Version 2, while every copy of the competition test file remains permanently excluded from training.
+
 ## Kaggle steps
 
 1. Open Kaggle and choose **Create → New Notebook**, then use **File → Import Notebook** to import `tfidf_baseline_v1.ipynb`.

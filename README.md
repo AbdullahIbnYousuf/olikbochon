@@ -1,6 +1,6 @@
 # অলীকবচন — Local Competition Workspace
 
-Setup-only Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Model development has not started yet.
+Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 is a completed offline TF-IDF baseline: its Kaggle CPU run finished in 53 seconds with internet disabled, and the validated `macro_f1_oof` submission at threshold 0.53 scored 0.466 on the public leaderboard. This single score confirms the pipeline works but is not evidence that the model is good or bad. Version 2 has not started.
 
 ## Directory layout
 
@@ -48,5 +48,4 @@ Private competition access cannot be automated: the participant must open the in
 
 ## Scope
 
-Setup may validate file existence, filenames, sizes, hashes, notebook structure, and CSV headers. It must not inspect or display raw test rows, create predictions, train models, or invoke an external inference API.
-
+Repository tooling may validate file existence, filenames, sizes, hashes, notebook structure, and CSV headers. It must never inspect or display raw test rows or invoke an external inference API. Version 1 used only the official 299-row labeled sample. The provided 5,000-row labeled dataset is approved for Version 2, but every copy of the competition test file must remain excluded from training.

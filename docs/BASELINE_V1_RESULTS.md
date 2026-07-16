@@ -31,6 +31,16 @@ No record from `data/public-20k/` was used for training, validation, vocabulary 
 - End-to-end local validation plus final in-memory fit: 12.07 seconds
 - Hardware path: CPU
 
+## Confirmed Kaggle execution and submission
+
+Version 1 completed a fresh Kaggle **Save & Run All** using the imported `tfidf-baseline-v1` notebook with the competition input attached, CPU selected, and internet disabled. Kaggle reported a runtime of **53 seconds**. The run observed the same 299 official labeled rows, fitted only on that official labeled sample, generated the required submissions, and passed the notebook's dynamic schema, ID-order, row-count, exact-column, and integer-label validation checks.
+
+The submitted file was `submission.csv`, using strategy `macro_f1_oof` at threshold **0.53**. The submission completed successfully and received a public leaderboard score of **0.466**, which Kaggle displayed as the current best score at that time. Neither `submission_fixed_050.csv` nor `submission_class0_experimental.csv` was submitted.
+
+This is the first confirmed end-to-end Kaggle baseline: offline training, guarded competition inference, submission creation, format validation, and competition submission all worked. It does **not** establish that the model or threshold is good or bad. One public score is only a pipeline baseline and must not be used for leaderboard threshold probing or broad model conclusions.
+
+No external API, model download, or network-dependent inference was used. The provided 5,000-row labeled dataset is approved for Version 2, but it was not used in Version 1. Every copy of the competition test file—including any copy distributed beside other data—must remain excluded from training.
+
 ## Trivial-predictor diagnostics
 
 | Predictor | Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix `[true rows][predicted cols]` |
@@ -266,6 +276,8 @@ The two reasonable Version 1 candidates are the macro-F1-selected default `submi
 - Only official labeled records were used.
 - The public dataset and its copied test file were not opened by the training/validation path.
 - The real local competition test CSV was not opened.
-- No submission was generated locally.
+- No submission was generated locally; the confirmed submission was generated only by the guarded Kaggle execution path.
 - No external API, web request, model download, transformer, or pretrained weight was used.
+- Kaggle internet was disabled and CPU execution completed in 53 seconds.
+- The submitted macro-F1-selected file passed format validation and scored 0.466 on the public leaderboard.
 - The original starter notebook remained unchanged.
