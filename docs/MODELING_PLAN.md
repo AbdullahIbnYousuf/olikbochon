@@ -41,9 +41,13 @@ Build sparse features with a `FeatureUnion`/`ColumnTransformer`:
 
 Fit vectorizers on training folds only. Start with conservative `min_df` and feature caps; record every setting in a config.
 
+Version 1 locks the configuration rather than tuning it. The word branch uses 1–2 grams, `max_features=20_000`, `min_df=1`, `max_df=1.0`, `sublinear_tf=True`, `lowercase=False`, `strip_accents=None`, `dtype=float32`, token pattern `(?u)\b\w+\b`, and L2 normalization. The `char_wb` branch uses 3–5 grams, `max_features=30_000`, and the same document-frequency, case, accent, dtype, sublinear-TF, and normalization settings. `min_df=1` is intentional because the official labeled sample is small and rare Bengali terms may be informative.
+
 ### A3. Linear models
 
 Primary baseline: balanced logistic regression. It supplies probabilities for threshold tuning and later ensembling.
+
+Version 1 fixes logistic regression at `C=1.0`, `solver="liblinear"`, `max_iter=2000`, `class_weight="balanced"`, and `random_state=42`. These values are not tuned.
 
 One challenger: class-weighted linear SVM. Tune its decision threshold directly; use probability calibration only if calibrated probabilities materially help an ensemble. Calibration must be fitted inside training folds, never on the evaluation fold.
 
@@ -54,6 +58,8 @@ One challenger: class-weighted linear SVM. Tune its decision threshold directly;
 - Tune the label-0 decision threshold using validation predictions only. Verify classifier `classes_` before selecting the correct probability column.
 - Report the default-threshold score beside the tuned score so threshold gains are visible.
 - Keep threshold selection independent from any competition-test or leaderboard observations.
+- Use nested 5×3 CV for the honest threshold-selected estimate. Select a threshold only from the inner OOF predictions, then apply it to the untouched outer fold.
+- Separately select the deployment threshold from standard full 5-fold OOF predictions and label its score an optimistic tuning estimate.
 
 ### A5. Submission guardrail
 
@@ -169,9 +175,10 @@ Implement a **balanced logistic-regression classifier over combined word and cha
 - **Training data:** the official `dataset samples.json` only until the public-data license/version questions are resolved.
 - **Input fields:** `prompt_bn`, normalized `context`, `response_bn`, plus `has_context`; encode explicit field markers.
 - **Preprocessing:** validate schema/labels; coerce prompt and response to strings; normalize null-like context; no stemming, translation, external lookup, or learned preprocessing outside folds.
-- **Features:** word 1–2 grams and `char_wb` 3–5 grams with conservative fold-fitted caps/minimum document frequency; append `has_context` and basic lengths.
-- **Validation split:** 5-fold stratified OOF with shuffle and seed 42, with exact/near-duplicate groups kept together if the audit finds any. Use the duplicate-safe nested or holdout threshold procedure from `VALIDATION_PLAN.md`.
+- **Features:** word 1–2 grams capped at 20,000 and `char_wb` 3–5 grams capped at 30,000, both with the locked settings above and `min_df=1`. Combine them with `FeatureUnion`; do not tune them.
+- **Classifier:** logistic regression with `C=1.0`, `solver="liblinear"`, `max_iter=2000`, balanced class weights, and seed 42.
+- **Validation split:** standard 5-fold stratified OOF at threshold 0.50 plus nested 5×3 CV for an honest threshold-selected estimate. Select the final deployment threshold from full 5-fold OOF probabilities and clearly label its same-OOF metric optimistic.
 - **Decision metric:** class-0 F1 for selection pending organizer clarification; always report class-1 F1, macro F1, accuracy, confusion matrix, and context-regime scores.
-- **Expected files:** `src/data.py`, `src/features.py`, `src/metrics.py`, `src/train_baseline.py`, `src/predict_baseline.py`, `tests/test_data_contract.py`, `tests/test_metrics.py`, `tests/test_submission_contract.py`, a config under `configs/`, and an ignored serialized model/output directory. Any notebook belongs in `notebooks/generated/`.
+- **Expected files:** reusable modules under `src/olikbochon/`; synthetic tests under `tests/`; canonical Jupytext source plus a clean generated notebook under `notebooks/generated/`; `docs/BASELINE_V1_RESULTS.md`; and `docs/KAGGLE_RUN_V1.md`. The notebook source is canonical and the `.ipynb` is generated from it.
 - **Expected runtime:** under 5 minutes on a normal CPU for the current official sample; comfortably under Kaggle limits.
 - **Success criteria:** deterministic reruns; no fold or convergence failures; class-0 F1 better than constant-label and simple majority baselines; stable fold scores without obvious leakage; exact validated `id,label` output in a synthetic fixture; zero network/model-download calls; and all tests plus setup verification passing. Do not generate a competition submission until a later implementation task explicitly authorizes it.
