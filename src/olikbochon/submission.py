@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
+from olikbochon.metrics import (
+    CLASS0_F1_OOF_EXPERIMENTAL,
+    FIXED_050,
+    MACRO_F1_OOF,
+)
+
 
 TEST_COLUMNS = ("id", "context", "prompt_bn", "response_bn")
 SUBMISSION_COLUMNS = ("id", "label")
+SUBMISSION_FILENAMES = {
+    MACRO_F1_OOF: "submission.csv",
+    FIXED_050: "submission_fixed_050.csv",
+    CLASS0_F1_OOF_EXPERIMENTAL: "submission_class0_experimental.csv",
+}
 
 
 class SubmissionValidationError(ValueError):
@@ -78,3 +89,26 @@ def build_submission(
     )
     validate_submission(submission, test_ids.reset_index(drop=True), sample_submission)
     return submission
+
+
+def build_submission_variants(
+    test_ids: pd.Series,
+    predictions_by_strategy: Mapping[str, Sequence[int]],
+    sample_submission: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Build and independently validate every named Version 1 submission variant."""
+    if set(predictions_by_strategy) != set(SUBMISSION_FILENAMES):
+        raise SubmissionValidationError(
+            f"Submission strategies must be exactly {sorted(SUBMISSION_FILENAMES)}"
+        )
+    variants: dict[str, pd.DataFrame] = {}
+    normalized_ids = test_ids.reset_index(drop=True)
+    for strategy in SUBMISSION_FILENAMES:
+        submission = build_submission(
+            normalized_ids,
+            predictions_by_strategy[strategy],
+            sample_submission,
+        )
+        validate_submission(submission, normalized_ids, sample_submission)
+        variants[strategy] = submission
+    return variants

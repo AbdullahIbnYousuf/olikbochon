@@ -15,6 +15,15 @@ from olikbochon.modeling import RANDOM_STATE, build_model, label_probability
 
 
 THRESHOLDS = np.arange(20, 81, dtype=np.int64) / 100.0
+FIXED_050 = "fixed_050"
+MACRO_F1_OOF = "macro_f1_oof"
+CLASS0_F1_OOF_EXPERIMENTAL = "class0_f1_oof_experimental"
+DEFAULT_THRESHOLD_STRATEGY = MACRO_F1_OOF
+THRESHOLD_STRATEGIES = (
+    FIXED_050,
+    MACRO_F1_OOF,
+    CLASS0_F1_OOF_EXPERIMENTAL,
+)
 
 
 @dataclass(frozen=True)
@@ -73,13 +82,23 @@ def threshold_table(y_true: Sequence[int], probabilities_label1: Sequence[float]
     return pd.DataFrame(rows)
 
 
-def select_threshold(table: pd.DataFrame) -> float:
-    """Select a threshold using the locked deterministic four-level ordering."""
+def select_threshold(table: pd.DataFrame, strategy: str = DEFAULT_THRESHOLD_STRATEGY) -> float:
+    """Select a threshold with the deterministic ordering for a named strategy."""
     required = {"threshold", "f1_label0", "macro_f1"}
     if not required.issubset(table.columns) or table.empty:
         raise ValueError(f"Threshold table must be nonempty and contain {sorted(required)}")
+    if strategy == FIXED_050:
+        return 0.5
+    if strategy == MACRO_F1_OOF:
+        columns = ["macro_f1", "f1_label0", "distance", "threshold"]
+    elif strategy == CLASS0_F1_OOF_EXPERIMENTAL:
+        columns = ["f1_label0", "macro_f1", "distance", "threshold"]
+    else:
+        raise ValueError(
+            f"Unknown threshold strategy {strategy!r}; expected one of {THRESHOLD_STRATEGIES}"
+        )
     ranked = table.assign(distance=(table["threshold"] - 0.5).abs()).sort_values(
-        ["f1_label0", "macro_f1", "distance", "threshold"],
+        columns,
         ascending=[False, False, True, True],
         kind="mergesort",
     )
@@ -114,8 +133,14 @@ def standard_oof_predictions(
     return OOFResult(probabilities, predictions, tuple(fold_rows))
 
 
-def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) -> NestedCVResult:
-    """Evaluate threshold selection with inner OOF tuning and untouched outer folds."""
+def nested_threshold_predictions(
+    texts: Sequence[str],
+    y_true: Sequence[int],
+    strategy: str = DEFAULT_THRESHOLD_STRATEGY,
+) -> NestedCVResult:
+    """Evaluate one strategy with inner OOF tuning and untouched outer folds."""
+    if strategy not in {MACRO_F1_OOF, CLASS0_F1_OOF_EXPERIMENTAL}:
+        raise ValueError("Nested threshold evaluation requires an OOF-selected strategy")
     texts_array = np.asarray(texts, dtype=object)
     truth = np.asarray(y_true, dtype=np.int64)
     outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
@@ -142,7 +167,9 @@ def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) ->
                 inner_model, inner_texts[inner_valid], label=1
             )
 
-        selected = select_threshold(threshold_table(inner_truth, inner_probabilities))
+        selected = select_threshold(
+            threshold_table(inner_truth, inner_probabilities), strategy=strategy
+        )
         thresholds.append(selected)
         outer_model = build_model()
         outer_model.fit(texts_array[outer_train], truth[outer_train])
@@ -158,6 +185,46 @@ def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) ->
         )
 
     return NestedCVResult(outer_predictions, tuple(thresholds), tuple(fold_rows))
+
+
+def trivial_predictor_metrics(y_true: Sequence[int]) -> dict[str, dict[str, Any]]:
+    """Return aggregate metrics for all-zero, all-one, and majority predictors."""
+    truth = np.asarray(y_true, dtype=np.int64)
+    if truth.size == 0 or not np.isin(truth, [0, 1]).all():
+        raise ValueError("Truth labels must be a nonempty binary sequence")
+    counts = np.bincount(truth, minlength=2)
+    majority_label = int(np.flatnonzero(counts == counts.max())[0])
+
+    def metrics_for(label: int) -> dict[str, Any]:
+        return {
+            "predicted_label": label,
+            **classification_metrics(truth, np.full(truth.size, label, dtype=np.int64)),
+        }
+
+    return {
+        "predict_all_0": metrics_for(0),
+        "predict_all_1": metrics_for(1),
+        "majority_class": metrics_for(majority_label),
+    }
+
+
+def prediction_collapse_warning(
+    y_pred: Sequence[int], *, name: str, limit: float = 0.90
+) -> str | None:
+    """Warn when one predicted class strictly exceeds the configured share."""
+    predicted = np.asarray(y_pred, dtype=np.int64)
+    if predicted.size == 0 or not np.isin(predicted, [0, 1]).all():
+        raise ValueError("Predicted labels must be a nonempty binary sequence")
+    counts = np.bincount(predicted, minlength=2)
+    dominant_label = int(np.argmax(counts))
+    dominant_share = float(counts[dominant_label] / predicted.size)
+    if dominant_share <= limit:
+        return None
+    return (
+        f"WARNING: prediction collapse for {name}: label {dominant_label} represents "
+        f"{dominant_share:.1%} of predictions (more than {limit:.0%}). A high class-specific "
+        "F1 may be caused by class collapse rather than useful discrimination."
+    )
 
 
 def fold_mean_std(fold_metrics: Sequence[dict[str, Any]]) -> dict[str, dict[str, float]]:

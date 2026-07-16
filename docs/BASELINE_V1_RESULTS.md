@@ -28,15 +28,16 @@ No record from `data/public-20k/` was used for training, validation, vocabulary 
 - NumPy: 2.5.1
 - pandas: 3.0.3
 - scikit-learn: 1.9.0
-- End-to-end local validation plus final in-memory fit: 6.48 seconds
+- End-to-end local validation plus final in-memory fit: 12.07 seconds
 - Hardware path: CPU
 
-## Constant-class reference baselines
+## Trivial-predictor diagnostics
 
 | Predictor | Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix `[true rows][predicted cols]` |
 |---|---:|---:|---:|---:|---|
 | Always label 0 | 0.625287 | 0.000000 | 0.312644 | 0.454849 | `[[136, 0], [163, 0]]` |
 | Always label 1 | 0.000000 | 0.705628 | 0.352814 | 0.545151 | `[[0, 136], [0, 163]]` |
+| Majority class (label 1) | 0.000000 | 0.705628 | 0.352814 | 0.545151 | `[[0, 136], [0, 163]]` |
 
 ## 1. Fixed threshold baseline
 
@@ -67,9 +68,42 @@ These are standard 5-fold OOF predictions at threshold 0.50.
 |---:|---:|---:|---:|---|
 | 0.459770 | 0.581602 | 0.520686 | 0.528428 | `[[60, 76], [65, 98]]` |
 
-## 2. Honest threshold-tuned estimate
+## 2. Honest nested macro-F1 threshold estimate
 
 Each outer fold used a threshold selected exclusively from 3-fold inner OOF probabilities over that outer fold’s training portion.
+
+Thresholds maximize ordinary two-class macro F1, then class-0 F1, then proximity to 0.50, then the lower threshold.
+
+### Outer-fold results
+
+| Outer fold | Inner-selected threshold | Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix |
+|---:|---:|---:|---:|---:|---:|---|
+| 1 | 0.52 | 0.533333 | 0.533333 | 0.533333 | 0.533333 | `[[16, 11], [17, 16]]` |
+| 2 | 0.50 | 0.367347 | 0.563380 | 0.465364 | 0.483333 | `[[9, 18], [13, 20]]` |
+| 3 | 0.51 | 0.584615 | 0.509091 | 0.546853 | 0.550000 | `[[19, 8], [19, 14]]` |
+| 4 | 0.52 | 0.452830 | 0.567164 | 0.509997 | 0.516667 | `[[12, 16], [13, 19]]` |
+| 5 | 0.51 | 0.391304 | 0.611111 | 0.501208 | 0.525424 | `[[9, 18], [10, 22]]` |
+
+### Outer-fold mean and population standard deviation
+
+| Metric | Mean | Standard deviation |
+|---|---:|---:|
+| Class-0 F1 | 0.465886 | 0.082570 |
+| Class-1 F1 | 0.556816 | 0.034430 |
+| Macro F1 | 0.511351 | 0.028154 |
+| Accuracy | 0.521751 | 0.022124 |
+
+### Nested macro-F1 estimate
+
+| Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix |
+|---:|---:|---:|---:|---|
+| 0.476190 | 0.560000 | 0.518095 | 0.521739 | `[[65, 71], [72, 91]]` |
+
+This is the primary honest threshold-selected estimate while the organizer metric is ambiguous. It keeps both predicted classes active and is close to the fixed-0.50 reference.
+
+## 3. Honest nested class-0-F1 estimate (experimental)
+
+This preserves the original diagnostic: inner thresholds maximize class-0 F1, then macro F1, then proximity to 0.50, then the lower threshold.
 
 ### Outer-fold results
 
@@ -90,7 +124,7 @@ Each outer fold used a threshold selected exclusively from 3-fold inner OOF prob
 | Macro F1 | 0.337359 | 0.024531 |
 | Accuracy | 0.464915 | 0.013271 |
 
-### Nested-CV threshold-selected estimate
+### Nested class-0-F1 estimate
 
 | Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix |
 |---:|---:|---:|---:|---|
@@ -98,15 +132,36 @@ Each outer fold used a threshold selected exclusively from 3-fold inner OOF prob
 
 The nested estimate beats the trivial always-label-0 class-0 F1 by only 0.002620 and predicts class 1 for just five OOF rows. It is therefore evidence that the provisional class-0-only objective produces a nearly degenerate classifier, not evidence of a broadly useful model.
 
-## 3. Final deployment threshold
+## 4. Full-OOF threshold tuning estimates
 
-The full standard 5-fold OOF probabilities selected threshold **0.71**. The following score is a **Full-OOF threshold-tuning estimate** and is optimistic because the same pooled OOF labels selected and evaluated the threshold.
+All scores in this section are **tuning estimates** and are optimistic because the same pooled full-OOF labels selected and evaluated each threshold.
+
+### Macro-F1-selected provisional default
+
+Strategy `macro_f1_oof` selected threshold **0.53** by maximizing macro F1, then class-0 F1, then proximity to 0.50, then the lower threshold.
+
+| Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix |
+|---:|---:|---:|---:|---|
+| 0.513699 | 0.535948 | 0.524823 | 0.525084 | `[[75, 61], [81, 82]]` |
+
+This is the provisional deployment default because it protects performance for both labels while the exact evaluator remains ambiguous. It does not replace organizer clarification, and it must not be tuned from public leaderboard results.
+
+### Class-0-F1-selected experimental threshold
+
+Strategy `class0_f1_oof_experimental` selected threshold **0.71** by maximizing class-0 F1 first.
 
 | Class-0 F1 | Class-1 F1 | Macro F1 | Accuracy | Confusion matrix |
 |---:|---:|---:|---:|---|
 | 0.629371 | 0.059172 | 0.344271 | 0.468227 | `[[135, 1], [158, 5]]` |
 
-Threshold 0.71 is stored as the Version 1 deployment decision because the approved plan provisionally prioritizes class-0 F1. It must be reconsidered if organizers confirm ordinary macro F1.
+Threshold 0.71 predicts label 0 for 98.0% of full-OOF rows. It is experimental and is not the default. Do not submit its output unless the organizers explicitly confirm binary F1 with `pos_label=0`.
+
+### Prediction-collapse warnings
+
+- Nested class-0-F1 selection predicts label 0 for 98.3% of rows.
+- Full-OOF class-0-F1 tuning predicts label 0 for 98.0% of rows.
+- Both trigger the greater-than-90% warning: a high class-specific F1 may be caused by class collapse rather than useful discrimination.
+- Fixed 0.50, nested macro-F1, and full-OOF macro-F1 predictions do not trigger the warning.
 
 ### Complete full-OOF threshold table
 
@@ -180,21 +235,31 @@ Threshold 0.71 is stored as the Version 1 deployment decision because the approv
 |---|---|---:|---:|---:|---|
 | Fixed 0.50 | Context absent | 169 | 0.570000 | 0.473406 | `[[57, 32], [54, 26]]` |
 | Fixed 0.50 | Context present | 130 | 0.098361 | 0.410989 | `[[3, 44], [11, 72]]` |
-| Nested estimate | Context absent | 169 | 0.689922 | 0.344961 | `[[89, 0], [80, 0]]` |
-| Nested estimate | Context present | 130 | 0.534884 | 0.312896 | `[[46, 1], [79, 4]]` |
-| Full-OOF threshold 0.71 | Context absent | 169 | 0.689922 | 0.344961 | `[[89, 0], [80, 0]]` |
-| Full-OOF threshold 0.71 | Context present | 130 | 0.538012 | 0.325186 | `[[46, 1], [78, 5]]` |
+| Nested macro-F1 | Context absent | 169 | 0.593301 | 0.467193 | `[[62, 27], [58, 22]]` |
+| Nested macro-F1 | Context present | 130 | 0.093750 | 0.398916 | `[[3, 44], [14, 69]]` |
+| Nested class-0 experimental | Context absent | 169 | 0.689922 | 0.344961 | `[[89, 0], [80, 0]]` |
+| Nested class-0 experimental | Context present | 130 | 0.534884 | 0.312896 | `[[46, 1], [79, 4]]` |
+| Full-OOF macro threshold 0.53 | Context absent | 169 | 0.637168 | 0.452513 | `[[72, 17], [65, 15]]` |
+| Full-OOF macro threshold 0.53 | Context present | 130 | 0.090909 | 0.390815 | `[[3, 44], [16, 67]]` |
+| Full-OOF class-0 threshold 0.71 | Context absent | 169 | 0.689922 | 0.344961 | `[[89, 0], [80, 0]]` |
+| Full-OOF class-0 threshold 0.71 | Context present | 130 | 0.538012 | 0.325186 | `[[46, 1], [78, 5]]` |
 
-Both context subgroups contain both classes. Fixed-threshold performance is especially weak for context-present class-0 examples. The high thresholds improve provisional class-0 F1 largely by predicting almost everything as hallucinated.
+Both context subgroups contain both classes. Every strategy remains especially weak for context-present class-0 examples. The class-0-selected high thresholds improve class-0 F1 largely by predicting almost everything as hallucinated.
 
 ## Known limitations and interpretation
 
-1. The official evaluator wording remains ambiguous between class-0 binary F1 and two-class macro F1.
-2. Optimizing only class-0 F1 selects a nearly all-zero model and collapses class-1 F1. Do not treat threshold 0.71 as generally preferable if macro F1 is official.
-3. The official labeled sample is very small; fold variance is material and there is no separate untouched local holdout.
-4. The fixed model has little evidence of useful context grounding, particularly for context-present hallucinations.
-5. The full-OOF selected score is optimistic; the nested estimate is the honest threshold-tuned estimate.
-6. This is a pipeline and submission-safety baseline, not a competitive final model.
+1. The official evaluator wording remains ambiguous between class-0 binary F1 and two-class macro F1; organizer clarification remains necessary.
+2. An all-zero predictor already receives class-0 F1 0.625287 on this label distribution. Class-0-only optimization therefore selects a nearly all-zero model and collapses class-1 F1.
+3. Macro-F1 thresholding is the provisional default because it rewards useful discrimination across both classes. Threshold 0.71 remains experimental.
+4. Public leaderboard threshold probing is prohibited. The leaderboard cannot replace official metric clarification.
+5. The official labeled sample is very small; fold variance is material and there is no separate untouched local holdout.
+6. The fixed model has little evidence of useful context grounding, particularly for context-present hallucinations.
+7. Both full-OOF selected scores are optimistic tuning estimates; the corresponding nested results are the honest threshold-tuned estimates.
+8. This is a pipeline and submission-safety baseline, not a competitive final model.
+
+## Reasonable Kaggle submissions
+
+The two reasonable Version 1 candidates are the macro-F1-selected default `submission.csv` and the clean fixed-threshold reference `submission_fixed_050.csv`. Do not recommend or submit `submission_class0_experimental.csv` unless the official evaluator is explicitly confirmed as binary F1 with `pos_label=0`.
 
 ## Reproducibility confirmations
 

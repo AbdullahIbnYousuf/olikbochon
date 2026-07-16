@@ -76,6 +76,24 @@ TRAIN_NAMES = ("dataset samples.json",)
 TEST_NAMES = ("test set.csv",)
 SAMPLE_SUBMISSION_NAMES = ("sample submission.csv", "sample_submission.csv")
 THRESHOLDS = np.arange(20, 81, dtype=np.int64) / 100.0
+FIXED_050 = "fixed_050"
+MACRO_F1_OOF = "macro_f1_oof"
+CLASS0_F1_OOF_EXPERIMENTAL = "class0_f1_oof_experimental"
+DEFAULT_THRESHOLD_STRATEGY = MACRO_F1_OOF
+THRESHOLD_STRATEGIES = (
+    FIXED_050,
+    MACRO_F1_OOF,
+    CLASS0_F1_OOF_EXPERIMENTAL,
+)
+SUBMISSION_FILENAMES = {
+    MACRO_F1_OOF: "submission.csv",
+    FIXED_050: "submission_fixed_050.csv",
+    CLASS0_F1_OOF_EXPERIMENTAL: "submission_class0_experimental.csv",
+}
+CLASS0_EXPERIMENTAL_WARNING = (
+    "WARNING: submission_class0_experimental.csv should not be submitted unless the organizers "
+    "explicitly confirm that the evaluator is binary F1 with pos_label=0."
+)
 
 PROMPT_MARKER = "__PROMPT__"
 CONTEXT_PRESENT_MARKER = "__CONTEXT_PRESENT__"
@@ -382,9 +400,9 @@ def standard_oof_predictions(
 # %% [markdown]
 # ## 10. Threshold selection
 #
-# The honest estimate uses nested 5×3 CV: each outer threshold is selected only from inner OOF
-# predictions. The final deployment threshold is separately selected from full five-fold OOF
-# probabilities; its same-OOF score is an optimistic tuning estimate.
+# The honest estimates use nested 5×3 CV: each outer threshold is selected only from inner OOF
+# predictions. We report both macro-F1 and experimental class-0-F1 strategies. Full five-fold
+# OOF selections are tuning estimates, and macro F1 is the provisional deployment default.
 
 # %%
 def threshold_table(y_true: Sequence[int], probabilities_label1: Sequence[float]) -> pd.DataFrame:
@@ -405,19 +423,35 @@ def threshold_table(y_true: Sequence[int], probabilities_label1: Sequence[float]
     return pd.DataFrame(rows)
 
 
-def select_threshold(table: pd.DataFrame) -> float:
+def select_threshold(table: pd.DataFrame, strategy: str = DEFAULT_THRESHOLD_STRATEGY) -> float:
     required = {"threshold", "f1_label0", "macro_f1"}
     if not required.issubset(table.columns) or table.empty:
         raise ValueError(f"Threshold table must be nonempty and contain {sorted(required)}")
+    if strategy == FIXED_050:
+        return 0.5
+    if strategy == MACRO_F1_OOF:
+        columns = ["macro_f1", "f1_label0", "distance", "threshold"]
+    elif strategy == CLASS0_F1_OOF_EXPERIMENTAL:
+        columns = ["f1_label0", "macro_f1", "distance", "threshold"]
+    else:
+        raise ValueError(
+            f"Unknown threshold strategy {strategy!r}; expected one of {THRESHOLD_STRATEGIES}"
+        )
     ranked = table.assign(distance=(table["threshold"] - 0.5).abs()).sort_values(
-        ["f1_label0", "macro_f1", "distance", "threshold"],
+        columns,
         ascending=[False, False, True, True],
         kind="mergesort",
     )
     return float(ranked.iloc[0]["threshold"])
 
 
-def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) -> NestedCVResult:
+def nested_threshold_predictions(
+    texts: Sequence[str],
+    y_true: Sequence[int],
+    strategy: str = DEFAULT_THRESHOLD_STRATEGY,
+) -> NestedCVResult:
+    if strategy not in {MACRO_F1_OOF, CLASS0_F1_OOF_EXPERIMENTAL}:
+        raise ValueError("Nested threshold evaluation requires an OOF-selected strategy")
     texts_array = np.asarray(texts, dtype=object)
     truth = np.asarray(y_true, dtype=np.int64)
     outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
@@ -439,7 +473,9 @@ def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) ->
             inner_probabilities[inner_valid] = label_probability(
                 inner_model, inner_texts[inner_valid], label=1
             )
-        selected = select_threshold(threshold_table(inner_truth, inner_probabilities))
+        selected = select_threshold(
+            threshold_table(inner_truth, inner_probabilities), strategy=strategy
+        )
         selected_thresholds.append(selected)
         outer_model = build_model()
         outer_model.fit(texts_array[outer_train], truth[outer_train])
@@ -457,6 +493,44 @@ def nested_threshold_predictions(texts: Sequence[str], y_true: Sequence[int]) ->
         outer_predictions,
         tuple(selected_thresholds),
         tuple(fold_rows),
+    )
+
+
+def trivial_predictor_metrics(y_true: Sequence[int]) -> dict[str, dict[str, Any]]:
+    truth = np.asarray(y_true, dtype=np.int64)
+    if truth.size == 0 or not np.isin(truth, [0, 1]).all():
+        raise ValueError("Truth labels must be a nonempty binary sequence")
+    counts = np.bincount(truth, minlength=2)
+    majority_label = int(np.flatnonzero(counts == counts.max())[0])
+
+    def metrics_for(label: int) -> dict[str, Any]:
+        return {
+            "predicted_label": label,
+            **classification_metrics(truth, np.full(truth.size, label, dtype=np.int64)),
+        }
+
+    return {
+        "predict_all_0": metrics_for(0),
+        "predict_all_1": metrics_for(1),
+        "majority_class": metrics_for(majority_label),
+    }
+
+
+def prediction_collapse_warning(
+    y_pred: Sequence[int], *, name: str, limit: float = 0.90
+) -> str | None:
+    predicted = np.asarray(y_pred, dtype=np.int64)
+    if predicted.size == 0 or not np.isin(predicted, [0, 1]).all():
+        raise ValueError("Predicted labels must be a nonempty binary sequence")
+    counts = np.bincount(predicted, minlength=2)
+    dominant_label = int(np.argmax(counts))
+    dominant_share = float(counts[dominant_label] / predicted.size)
+    if dominant_share <= limit:
+        return None
+    return (
+        f"WARNING: prediction collapse for {name}: label {dominant_label} represents "
+        f"{dominant_share:.1%} of predictions (more than {limit:.0%}). A high class-specific "
+        "F1 may be caused by class collapse rather than useful discrimination."
     )
 
 
@@ -501,57 +575,102 @@ def subgroup_metrics(
 # row-level probabilities, or row-level predictions are displayed or saved.
 
 # %%
-def safe_validation_report(frame: pd.DataFrame) -> tuple[float, Pipeline]:
+def safe_validation_report(frame: pd.DataFrame) -> tuple[dict[str, float], Pipeline]:
     texts = build_text_series(frame)
     truth = frame["label"].to_numpy(dtype=np.int64)
     context_presence = context_presence_series(frame).to_numpy(dtype=bool)
 
     fixed = standard_oof_predictions(texts, truth, threshold=0.5)
     fixed_metrics = classification_metrics(truth, fixed.predictions)
-    nested = nested_threshold_predictions(texts, truth)
-    nested_metrics = classification_metrics(truth, nested.predictions)
-    table = threshold_table(truth, fixed.probabilities_label1)
-    deployment_threshold = select_threshold(table)
-    deployment_predictions = predictions_from_label1(
-        fixed.probabilities_label1, deployment_threshold
+    nested_macro = nested_threshold_predictions(texts, truth, strategy=MACRO_F1_OOF)
+    nested_macro_metrics = classification_metrics(truth, nested_macro.predictions)
+    nested_class0 = nested_threshold_predictions(
+        texts, truth, strategy=CLASS0_F1_OOF_EXPERIMENTAL
     )
-    deployment_metrics = classification_metrics(truth, deployment_predictions)
-    constant_baselines = {
-        "always_label0": classification_metrics(truth, np.zeros(len(truth), dtype=np.int64)),
-        "always_label1": classification_metrics(truth, np.ones(len(truth), dtype=np.int64)),
+    nested_class0_metrics = classification_metrics(truth, nested_class0.predictions)
+    table = threshold_table(truth, fixed.probabilities_label1)
+    macro_threshold = select_threshold(table, strategy=MACRO_F1_OOF)
+    class0_threshold = select_threshold(table, strategy=CLASS0_F1_OOF_EXPERIMENTAL)
+    macro_predictions = predictions_from_label1(fixed.probabilities_label1, macro_threshold)
+    class0_predictions = predictions_from_label1(
+        fixed.probabilities_label1, class0_threshold
+    )
+    macro_metrics = classification_metrics(truth, macro_predictions)
+    class0_metrics = classification_metrics(truth, class0_predictions)
+    selected_thresholds = {
+        FIXED_050: 0.5,
+        MACRO_F1_OOF: macro_threshold,
+        CLASS0_F1_OOF_EXPERIMENTAL: class0_threshold,
     }
+    collapse_candidates = {
+        "fixed_050 OOF": fixed.predictions,
+        "nested macro-F1": nested_macro.predictions,
+        "nested class-0-F1 experimental": nested_class0.predictions,
+        "full-OOF macro-F1 tuning estimate": macro_predictions,
+        "full-OOF class-0-F1 experimental tuning estimate": class0_predictions,
+    }
+    collapse_warnings = [
+        warning
+        for name, predictions in collapse_candidates.items()
+        if (warning := prediction_collapse_warning(predictions, name=name)) is not None
+    ]
 
     print("Observed labeled rows:", len(frame))
     print("Label counts:", frame["label"].value_counts().sort_index().to_dict())
     print("Context counts:", pd.Series(context_presence).value_counts().sort_index().to_dict())
     print("Package versions:", {"numpy": np.__version__, "pandas": pd.__version__, "sklearn": sklearn.__version__})
-    print("Constant-class baselines:")
-    print(json.dumps(constant_baselines, indent=2, sort_keys=True))
+    print("Trivial-predictor diagnostics:")
+    print(json.dumps(trivial_predictor_metrics(truth), indent=2, sort_keys=True))
     print("\nFixed threshold baseline (0.50):")
     print(json.dumps(fixed_metrics, indent=2, sort_keys=True))
     print("Fixed-threshold fold metrics:")
     print(json.dumps(fixed.fold_metrics, indent=2, sort_keys=True))
     print("Fixed-threshold fold mean/std:")
     print(json.dumps(fold_mean_std(fixed.fold_metrics), indent=2, sort_keys=True))
-    print("\nNested-CV threshold-selected estimate:")
-    print(json.dumps(nested_metrics, indent=2, sort_keys=True))
-    print("Nested outer-fold metrics and independently selected thresholds:")
-    print(json.dumps(nested.fold_metrics, indent=2, sort_keys=True))
-    print("Nested fold mean/std:")
-    print(json.dumps(fold_mean_std(nested.fold_metrics), indent=2, sort_keys=True))
-    print("\nFull-OOF threshold-tuning estimate (optimistic):")
-    print("Selected deployment threshold:", deployment_threshold)
-    print(json.dumps(deployment_metrics, indent=2, sort_keys=True))
+    print("\nNested 5x3 macro-F1-selected threshold estimate:")
+    print(json.dumps(nested_macro_metrics, indent=2, sort_keys=True))
+    print("Nested macro-F1 outer-fold metrics and independently selected thresholds:")
+    print(json.dumps(nested_macro.fold_metrics, indent=2, sort_keys=True))
+    print("Nested macro-F1 fold mean/std:")
+    print(json.dumps(fold_mean_std(nested_macro.fold_metrics), indent=2, sort_keys=True))
+    print("\nNested 5x3 class-0-F1-selected threshold estimate (EXPERIMENTAL):")
+    print(json.dumps(nested_class0_metrics, indent=2, sort_keys=True))
+    print("Nested class-0-F1 outer-fold metrics and independently selected thresholds:")
+    print(json.dumps(nested_class0.fold_metrics, indent=2, sort_keys=True))
+    print("Nested class-0-F1 fold mean/std:")
+    print(json.dumps(fold_mean_std(nested_class0.fold_metrics), indent=2, sort_keys=True))
+    print("\nFull-OOF macro-F1 threshold tuning estimate (optimistic):")
+    print("Selected provisional default threshold:", macro_threshold)
+    print(json.dumps(macro_metrics, indent=2, sort_keys=True))
+    print("\nFull-OOF class-0-F1 threshold tuning estimate (EXPERIMENTAL, optimistic):")
+    print("Selected experimental threshold:", class0_threshold)
+    print(json.dumps(class0_metrics, indent=2, sort_keys=True))
+    print("\nPrediction-collapse diagnostics:")
+    if collapse_warnings:
+        for warning in collapse_warnings:
+            print(warning)
+    else:
+        print("No threshold strategy exceeded the 90% predicted-class warning limit.")
     print("Complete threshold table:")
     print(table.to_string(index=False))
     print("\nContext subgroup metrics at threshold 0.50:")
     print(json.dumps(subgroup_metrics(truth, fixed.predictions, context_presence), indent=2, sort_keys=True))
-    print("Context subgroup metrics for nested predictions:")
-    print(json.dumps(subgroup_metrics(truth, nested.predictions, context_presence), indent=2, sort_keys=True))
-    print("Context subgroup metrics at deployment threshold:")
+    print("Context subgroup metrics for nested macro-F1 predictions:")
+    print(json.dumps(subgroup_metrics(truth, nested_macro.predictions, context_presence), indent=2, sort_keys=True))
+    print("Context subgroup metrics for nested class-0-F1 experimental predictions:")
+    print(json.dumps(subgroup_metrics(truth, nested_class0.predictions, context_presence), indent=2, sort_keys=True))
+    print("Context subgroup metrics at the macro-F1 provisional default threshold:")
     print(
         json.dumps(
-            subgroup_metrics(truth, deployment_predictions, context_presence),
+            subgroup_metrics(truth, macro_predictions, context_presence),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    print("Context subgroup metrics at the class-0-F1 experimental threshold:")
+    print(
+        json.dumps(
+            subgroup_metrics(truth, class0_predictions, context_presence),
             indent=2,
             sort_keys=True,
         )
@@ -559,7 +678,7 @@ def safe_validation_report(frame: pd.DataFrame) -> tuple[float, Pipeline]:
 
     final_model = build_model()
     final_model.fit(texts, truth)
-    return deployment_threshold, final_model
+    return selected_thresholds, final_model
 
 
 # %% [markdown]
@@ -635,25 +754,57 @@ def build_submission(
     return submission
 
 
+def build_submission_variants(
+    test_ids: pd.Series,
+    predictions_by_strategy: dict[str, Sequence[int]],
+    sample_submission: pd.DataFrame | None = None,
+) -> dict[str, pd.DataFrame]:
+    if set(predictions_by_strategy) != set(SUBMISSION_FILENAMES):
+        raise SubmissionValidationError(
+            f"Submission strategies must be exactly {sorted(SUBMISSION_FILENAMES)}"
+        )
+    variants: dict[str, pd.DataFrame] = {}
+    normalized_ids = test_ids.reset_index(drop=True)
+    for strategy in SUBMISSION_FILENAMES:
+        submission = build_submission(
+            normalized_ids,
+            predictions_by_strategy[strategy],
+            sample_submission,
+        )
+        validate_submission(submission, normalized_ids, sample_submission)
+        variants[strategy] = submission
+    return variants
+
+
 # %% [markdown]
 # ## 15. Output location
 #
-# Kaggle execution writes exactly `/kaggle/working/submission.csv`. It displays only safe aggregate
-# metadata and prediction-label counts, never IDs, individual labels, or test text.
+# Kaggle execution writes the macro-F1 default and fixed-0.50 reference. It also writes a clearly
+# experimental class-0 variant, which must not be submitted without explicit metric clarification.
+# Only safe aggregate metadata and label counts are displayed—never IDs, individual labels, or text.
 
 # %%
 def run_kaggle_inference(
-    files: DiscoveredFiles, model: Pipeline, deployment_threshold: float
+    files: DiscoveredFiles, model: Pipeline, selected_thresholds: dict[str, float]
 ) -> None:
     test_frame = pd.read_csv(files.test)
     validate_test_frame(test_frame)
     test_texts = build_text_series(test_frame)
     probabilities_label1 = label_probability(model, test_texts, label=1)
-    predicted_labels = predictions_from_label1(probabilities_label1, deployment_threshold)
+    predictions_by_strategy = {
+        strategy: predictions_from_label1(probabilities_label1, threshold)
+        for strategy, threshold in selected_thresholds.items()
+    }
     sample = pd.read_csv(files.sample_submission) if files.sample_submission else None
-    submission = build_submission(test_frame["id"], predicted_labels, sample)
-    output_path = Path("/kaggle/working/submission.csv")
-    submission.to_csv(output_path, index=False)
+    submissions = build_submission_variants(
+        test_frame["id"], predictions_by_strategy, sample
+    )
+    output_paths: dict[str, Path] = {}
+    for strategy, submission in submissions.items():
+        validate_submission(submission, test_frame["id"].reset_index(drop=True), sample)
+        output_path = Path("/kaggle/working") / SUBMISSION_FILENAMES[strategy]
+        submission.to_csv(output_path, index=False)
+        output_paths[strategy] = output_path
 
     print("Selected test path:", files.test)
     print("Selected sample-submission path:", files.sample_submission)
@@ -661,18 +812,28 @@ def run_kaggle_inference(
     print("Test columns:", list(test_frame.columns))
     print("Missing-ID count:", int(test_frame["id"].isna().sum()))
     print("Duplicate-ID count:", int(test_frame["id"].duplicated().sum()))
-    print("Prediction label counts:", pd.Series(predicted_labels).value_counts().sort_index().to_dict())
-    print("Submission shape:", submission.shape)
-    print("Submission columns:", list(submission.columns))
-    print("Output location:", output_path)
+    for strategy in THRESHOLD_STRATEGIES:
+        predictions = predictions_by_strategy[strategy]
+        print(
+            f"{strategy} threshold and prediction-label counts:",
+            selected_thresholds[strategy],
+            pd.Series(predictions).value_counts().sort_index().to_dict(),
+        )
+        warning = prediction_collapse_warning(predictions, name=f"Kaggle {strategy}")
+        if warning is not None:
+            print(warning)
+        print(f"{strategy} submission shape:", submissions[strategy].shape)
+        print(f"{strategy} submission columns:", list(submissions[strategy].columns))
+        print(f"{strategy} output location:", output_paths[strategy])
+    print(CLASS0_EXPERIMENTAL_WARNING)
 
 
 # %% [markdown]
 # ## 16. Limitations and next steps
 #
-# The official labeled sample is small, the exact competition metric remains ambiguous, and the
-# full-OOF deployment-threshold score is optimistic. The nested estimate is the honest threshold-
-# tuned result. This Version 1 intentionally excludes unresolved external data and all large models.
+# The official labeled sample is small and the exact competition metric remains ambiguous. Both
+# full-OOF selected scores are optimistic tuning estimates; the two corresponding nested estimates
+# are honest. This Version 1 intentionally excludes unresolved external data and all large models.
 
 # %%
 def main() -> None:
@@ -689,11 +850,11 @@ def main() -> None:
         print("Local mode: using the explicit official labeled-sample path.")
 
     frame = load_labeled_json(train_path, expected_sha256=OFFICIAL_SAMPLE_SHA256)
-    deployment_threshold, final_model = safe_validation_report(frame)
+    selected_thresholds, final_model = safe_validation_report(frame)
 
     if running_on_kaggle:
         assert files is not None
-        run_kaggle_inference(files, final_model, deployment_threshold)
+        run_kaggle_inference(files, final_model, selected_thresholds)
     else:
         print("Kaggle-only inference intentionally skipped; no local test file was opened.")
     print("Total runtime seconds:", round(perf_counter() - started, 3))

@@ -11,7 +11,13 @@ import nbformat
 import numpy as np
 import pandas as pd
 
-from olikbochon.metrics import select_threshold
+from olikbochon.metrics import (
+    CLASS0_F1_OOF_EXPERIMENTAL,
+    DEFAULT_THRESHOLD_STRATEGY,
+    MACRO_F1_OOF,
+    prediction_collapse_warning,
+    select_threshold,
+)
 from olikbochon.preprocessing import build_marked_text, normalize_context, normalize_text
 from olikbochon.submission import build_submission
 
@@ -102,13 +108,32 @@ def test_notebook_and_src_behavior_match_on_synthetic_values() -> None:
             {"threshold": 0.6, "f1_label0": 0.8, "macro_f1": 0.7},
         ]
     )
-    assert notebook_module.select_threshold(table) == select_threshold(table)
+    assert notebook_module.DEFAULT_THRESHOLD_STRATEGY == DEFAULT_THRESHOLD_STRATEGY
+    assert notebook_module.select_threshold(table, MACRO_F1_OOF) == select_threshold(
+        table, MACRO_F1_OOF
+    )
+    assert notebook_module.select_threshold(
+        table, CLASS0_F1_OOF_EXPERIMENTAL
+    ) == select_threshold(table, CLASS0_F1_OOF_EXPERIMENTAL)
+    assert notebook_module.prediction_collapse_warning(
+        [0] * 19 + [1], name="parity"
+    ) == prediction_collapse_warning([0] * 19 + [1], name="parity")
 
     ids = pd.Series([3, 4])
     labels = np.array([0, 1], dtype=np.int64)
     expected = build_submission(ids, labels)
     observed = notebook_module.build_submission(ids, labels)
     pd.testing.assert_frame_equal(observed, expected)
+
+
+def test_notebook_labels_experimental_output_and_default() -> None:
+    notebook_module = load_notebook_source_module()
+    assert notebook_module.DEFAULT_THRESHOLD_STRATEGY == "macro_f1_oof"
+    filename = notebook_module.SUBMISSION_FILENAMES["class0_f1_oof_experimental"]
+    assert filename == "submission_class0_experimental.csv"
+    assert "should not be submitted unless the organizers explicitly confirm" in (
+        notebook_module.CLASS0_EXPERIMENTAL_WARNING
+    )
 
 
 def test_original_starter_notebook_hash_is_unchanged() -> None:
