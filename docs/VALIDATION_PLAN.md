@@ -4,7 +4,7 @@
 
 Validation must estimate generalization to unseen official items, support threshold selection without touching competition test text, reveal context-regime failures, and remain cheap enough for a beginner team to repeat.
 
-The official metric wording is ambiguous. Until clarified, every run must report both class-specific F1 values and macro F1, with class-0 F1 treated as the provisional decision metric.
+The official metric wording is ambiguous. Until clarified, every run must report both class-specific F1 values and macro F1. Ordinary two-class macro F1 is the provisional decision metric because class-0-only optimization demonstrably collapses toward a trivial all-zero predictor.
 
 ## Data admission and deduplication before splitting
 
@@ -28,7 +28,7 @@ Because synthetic contrastive data may share most of a prompt/context while chan
 - Stratify on label; where feasible, balance the joint `(label, has_context)` distribution without creating tiny strata.
 - Use group-aware assignment if duplicate-family checks find groups.
 - The sample is small, so fold variance is part of the result, not noise to hide.
-- Repeat the cheap linear baseline with seeds 42, 123, and 2026 after the pipeline works. Report mean, standard deviation, minimum, and maximum rather than selecting the best seed.
+- Keep the locked outer seed 42 for Version 1. Report all five fold metrics and their mean/standard deviation rather than selecting a favorable fold or seed.
 
 ### If the public dataset is approved
 
@@ -57,27 +57,37 @@ Why accuracy is insufficient: it weights every correct prediction equally, hides
 
 ## Threshold selection
 
-For logistic regression, obtain probabilities and locate the class-0 column from `model.classes_`; never assume a column index. Predict class 0 when its probability exceeds threshold `t`.
+For logistic regression, obtain probabilities and locate the label-1 column from `model.classes_`; never assume a column index. Predict class 1 when its probability is at least threshold `t`, otherwise predict class 0.
 
-Preferred honest procedure when data permits:
+Version 1 supports three named strategies:
 
-1. train candidate models on training folds;
-2. tune `t` only on inner-fold or designated tuning predictions;
-3. freeze `t` before scoring the outer fold/untouched holdout;
-4. aggregate the independently evaluated outer predictions; and
-5. choose the final operational threshold from the median/mean of fold-optimal thresholds, then freeze it in config.
+- `fixed_050`: threshold 0.50 and no selection;
+- `macro_f1_oof`: maximize ordinary two-class macro F1, then class-0 F1, then closeness to 0.50, then the lower threshold; this is the provisional default;
+- `class0_f1_oof_experimental`: maximize class-0 F1, then macro F1, then closeness to 0.50, then the lower threshold; this is never the default while the metric is ambiguous.
 
-For the tiny Version 1 sample, nested 5-by-3 CV is acceptable for sparse linear models if runtime remains minutes. A cheaper alternative is repeated stratified CV: use one repeat for threshold development and the other predefined repeats for evaluation. Do not tune and claim an unbiased score on the same pooled OOF predictions.
+The locked honest procedure runs nested threshold evaluation separately for both selected strategies:
 
-Search a deterministic threshold grid or unique-score breakpoints. Predeclare tie-breaking: prefer the threshold with better macro F1, then the one closest to 0.5. Record the threshold curve and fold stability. Once the organizers clarify the evaluator, change the optimization objective explicitly and version the config.
+1. create outer 5-fold stratified CV with shuffle and seed 42;
+2. inside outer fold `i`, create inner 3-fold stratified CV over only the outer-training records with seed `42 + i`;
+3. generate inner OOF probabilities and select `t` from 0.20 through 0.80 by 0.01;
+4. rank thresholds using the active strategy’s ordering;
+5. fit on the complete outer-training portion and score the untouched outer-validation portion at that independently selected threshold;
+6. aggregate the five outer-validation predictions as either the nested macro-F1 estimate or nested experimental class-0-F1 estimate; and
+7. report each outer threshold plus fold and aggregate metrics.
+
+Separately, generate ordinary full 5-fold OOF probabilities. Report threshold-0.50 metrics as the fixed baseline. Select both macro-F1 and experimental class-0-F1 thresholds from the same full-OOF table. Label both scores “Full-OOF ... threshold tuning estimate.” These same-OOF scores are optimistic and are not the primary honest threshold-tuned estimates.
+
+Use the full-OOF macro-F1 threshold for `/kaggle/working/submission.csv`; also generate the clean fixed-0.50 reference. The class-0-selected file is experimental and must not be recommended unless organizers explicitly confirm binary F1 with `pos_label=0`. Once the evaluator is clarified, change the objective explicitly and version the config.
+
+For every threshold prediction set, warn when either predicted class exceeds 90% of all predictions. The warning must state that high class-specific F1 may be caused by class collapse rather than useful discrimination. Also report aggregate all-zero, all-one, and majority-class metrics without retaining row-level predictions. On the current sample, all-zero already receives approximately 0.6253 class-0 F1, explaining why class-0-only selection is unsafe.
 
 For a linear SVM, tune on signed decision scores. For ensembles, calibrate/blend on training-fold predictions only and repeat the same outer evaluation.
 
 ## Final untouched holdout
 
-- If only 299 official labels are usable, repeated/nested CV is more informative than permanently sacrificing a large holdout; clearly state that no untouched local holdout exists.
+- If only the small official sample is usable, the locked nested CV is more informative than permanently sacrificing a large holdout; clearly state that no untouched local holdout exists.
 - If the public data is approved, keep the entire official sample untouched through model/feature/threshold selection where feasible.
-- Never use the competition test or public leaderboard to choose preprocessing, features, models, ensemble weights, or thresholds.
+- Never use the competition test or public leaderboard to choose preprocessing, features, models, ensemble weights, or thresholds. Public leaderboard threshold probing is prohibited.
 
 ## Leakage checks per run
 
@@ -104,3 +114,11 @@ For each run, store only non-sensitive metadata in ignored outputs:
 - notes on failures or warnings.
 
 Promote a candidate only when gains appear across folds/seeds and both context regimes, not from one lucky split.
+
+## Version 1 notebook and discovery contract
+
+- Report the observed official-sample row count dynamically; never require 299 in reusable code.
+- Validate the labeled filename, schema, nonempty content, integer `{0,1}` labels, both-class presence, and the known local hash when available.
+- Accept `sample submission.csv` first and `sample_submission.csv` second. Hash same-named duplicates; accept only byte-identical copies and choose deterministically.
+- Treat `notebooks/generated/tfidf_baseline_v1.py` as canonical and generate the clean `.ipynb` with Jupytext.
+- Scan executable notebook content for forbidden behavior without rejecting explanatory Markdown.

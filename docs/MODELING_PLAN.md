@@ -16,7 +16,7 @@ The official rulebook says “Macro F1 on the HALLUCINATED class (label = 0).”
 - class-0 binary F1: `f1_score(y_true, y_pred, pos_label=0, average="binary")`;
 - macro F1: the unweighted mean of class-0 F1 and class-1 F1.
 
-The starter notebook calls the second quantity primary. Until the organizers clarify the exact evaluator, model selection should prioritize class-0 F1 because the official wording explicitly emphasizes the hallucinated class, while always reporting macro F1 and class-1 F1 to expose tradeoffs. Threshold choices must be revisited after clarification; leaderboard feedback is not a substitute for that clarification.
+The starter notebook calls the second quantity primary. The observed class-0-only threshold search collapsed toward an all-zero predictor: all-zero already scores about 0.6253 class-0 F1 on the current distribution, while the selected 0.71 threshold achieved only a tiny class-0 gain and destroyed class-1 F1. Until organizers clarify the evaluator, `macro_f1_oof` is therefore the provisional deployment default. Keep `fixed_050` as a clean reference and `class0_f1_oof_experimental` only as a diagnostic. Threshold choices must be revisited after clarification; public leaderboard probing is prohibited and is not a substitute for clarification.
 
 ## Phase A — Reliable offline baseline
 
@@ -41,9 +41,13 @@ Build sparse features with a `FeatureUnion`/`ColumnTransformer`:
 
 Fit vectorizers on training folds only. Start with conservative `min_df` and feature caps; record every setting in a config.
 
+Version 1 locks the configuration rather than tuning it. The word branch uses 1–2 grams, `max_features=20_000`, `min_df=1`, `max_df=1.0`, `sublinear_tf=True`, `lowercase=False`, `strip_accents=None`, `dtype=float32`, token pattern `(?u)\b\w+\b`, and L2 normalization. The `char_wb` branch uses 3–5 grams, `max_features=30_000`, and the same document-frequency, case, accent, dtype, sublinear-TF, and normalization settings. `min_df=1` is intentional because the official labeled sample is small and rare Bengali terms may be informative.
+
 ### A3. Linear models
 
 Primary baseline: balanced logistic regression. It supplies probabilities for threshold tuning and later ensembling.
+
+Version 1 fixes logistic regression at `C=1.0`, `solver="liblinear"`, `max_iter=2000`, `class_weight="balanced"`, and `random_state=42`. These values are not tuned.
 
 One challenger: class-weighted linear SVM. Tune its decision threshold directly; use probability calibration only if calibrated probabilities materially help an ensemble. Calibration must be fitted inside training folds, never on the evaluation fold.
 
@@ -51,15 +55,18 @@ One challenger: class-weighted linear SVM. Tune its decision threshold directly;
 
 - Use stratified, duplicate-aware folds as defined in `VALIDATION_PLAN.md`.
 - Compute class-0 F1, class-1 F1, macro F1, confusion matrix, and accuracy.
-- Tune the label-0 decision threshold using validation predictions only. Verify classifier `classes_` before selecting the correct probability column.
+- Support three named strategies: `fixed_050`, provisional-default `macro_f1_oof`, and nondefault `class0_f1_oof_experimental`. Verify classifier `classes_` before selecting the correct probability column.
 - Report the default-threshold score beside the tuned score so threshold gains are visible.
 - Keep threshold selection independent from any competition-test or leaderboard observations.
+- Use nested 5×3 CV for separate honest macro-F1-selected and experimental class-0-F1-selected estimates. Select each threshold only from inner OOF predictions, then apply it to the untouched outer fold.
+- Separately select both thresholds from standard full 5-fold OOF predictions and label both scores optimistic tuning estimates. Macro selection ranks by macro F1, class-0 F1, proximity to 0.50, then lower threshold; experimental class-0 selection reverses the first two criteria.
+- Report all-zero, all-one, and majority-class diagnostics. Warn when either predicted class exceeds 90%, because high class-specific F1 can reflect class collapse rather than useful discrimination.
 
 ### A5. Submission guardrail
 
 The later inference implementation must:
 
-1. require nonmissing unique test IDs;
+1. require nonmissing test IDs while preserving any organizer-provided duplicates;
 2. preserve every ID exactly and in input order;
 3. produce integer labels in `{0,1}`;
 4. produce exactly `id,label` in that order;
@@ -158,7 +165,7 @@ The notebook should be linear and restart-safe:
 5. batched inference under `torch.inference_mode()` for transformers;
 6. threshold application with explicit label direction;
 7. exact submission validation; and
-8. write `/kaggle/working/submission.csv`.
+8. write the macro-F1 default to `/kaggle/working/submission.csv`, the fixed reference to `/kaggle/working/submission_fixed_050.csv`, and a prominently warned experimental class-0 file to `/kaggle/working/submission_class0_experimental.csv`.
 
 It must make no API/network calls, no assumptions about row count/order/IDs, and no display of test text. Run a full internet-disabled Kaggle smoke test and record runtime, peak VRAM, artifact size, and output checks before final submission.
 
@@ -169,9 +176,10 @@ Implement a **balanced logistic-regression classifier over combined word and cha
 - **Training data:** the official `dataset samples.json` only until the public-data license/version questions are resolved.
 - **Input fields:** `prompt_bn`, normalized `context`, `response_bn`, plus `has_context`; encode explicit field markers.
 - **Preprocessing:** validate schema/labels; coerce prompt and response to strings; normalize null-like context; no stemming, translation, external lookup, or learned preprocessing outside folds.
-- **Features:** word 1–2 grams and `char_wb` 3–5 grams with conservative fold-fitted caps/minimum document frequency; append `has_context` and basic lengths.
-- **Validation split:** 5-fold stratified OOF with shuffle and seed 42, with exact/near-duplicate groups kept together if the audit finds any. Use the duplicate-safe nested or holdout threshold procedure from `VALIDATION_PLAN.md`.
-- **Decision metric:** class-0 F1 for selection pending organizer clarification; always report class-1 F1, macro F1, accuracy, confusion matrix, and context-regime scores.
-- **Expected files:** `src/data.py`, `src/features.py`, `src/metrics.py`, `src/train_baseline.py`, `src/predict_baseline.py`, `tests/test_data_contract.py`, `tests/test_metrics.py`, `tests/test_submission_contract.py`, a config under `configs/`, and an ignored serialized model/output directory. Any notebook belongs in `notebooks/generated/`.
+- **Features:** word 1–2 grams capped at 20,000 and `char_wb` 3–5 grams capped at 30,000, both with the locked settings above and `min_df=1`. Combine them with `FeatureUnion`; do not tune them.
+- **Classifier:** logistic regression with `C=1.0`, `solver="liblinear"`, `max_iter=2000`, balanced class weights, and seed 42.
+- **Validation split:** standard 5-fold stratified OOF at threshold 0.50 plus separate nested 5×3 CV estimates for macro-F1 and experimental class-0-F1 threshold selection. Select both full-OOF thresholds and clearly label both same-OOF scores optimistic tuning estimates.
+- **Decision metric:** ordinary two-class macro F1 is the provisional default pending organizer clarification. Preserve class-0 F1 selection only as experimental; always report both class F1 values, macro F1, accuracy, confusion matrix, collapse warnings, trivial predictors, and context-regime scores.
+- **Expected files:** reusable modules under `src/olikbochon/`; synthetic tests under `tests/`; canonical Jupytext source plus a clean generated notebook under `notebooks/generated/`; `docs/BASELINE_V1_RESULTS.md`; and `docs/KAGGLE_RUN_V1.md`. The notebook source is canonical and the `.ipynb` is generated from it.
 - **Expected runtime:** under 5 minutes on a normal CPU for the current official sample; comfortably under Kaggle limits.
-- **Success criteria:** deterministic reruns; no fold or convergence failures; class-0 F1 better than constant-label and simple majority baselines; stable fold scores without obvious leakage; exact validated `id,label` output in a synthetic fixture; zero network/model-download calls; and all tests plus setup verification passing. Do not generate a competition submission until a later implementation task explicitly authorizes it.
+- **Success criteria:** deterministic reruns; no fold or convergence failures; explicit comparison against constant-label and majority baselines; no silent predicted-class collapse; stable fold scores without obvious leakage; all three exact validated `id,label` variants in synthetic fixtures; zero network/model-download calls; and all tests plus setup verification passing. Kaggle generation is now authorized only through the guarded `/kaggle/input` path; local execution must never open the real test CSV.
