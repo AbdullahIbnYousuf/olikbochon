@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import UserDict
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,8 +11,10 @@ from olikbochon.v3_training import (
     DynamicPairCollator,
     EXPECTED_BASE_MISSING,
     EXPECTED_BASE_UNEXPECTED,
+    OPTIONAL_POSITION_IDS_KEY,
     TrainConfig,
     _validate_loading_info,
+    _validate_synthetic_forward,
     expected_optimizer_steps,
     place_oof_probabilities,
     run_with_oom_restart,
@@ -22,46 +26,176 @@ class SyntheticOOM(RuntimeError):
     pass
 
 
-def test_base_model_transition_accepts_only_expected_keys() -> None:
-    _validate_loading_info(
-        {
-            "missing_keys": sorted(EXPECTED_BASE_MISSING),
-            "unexpected_keys": sorted(EXPECTED_BASE_UNEXPECTED),
-            "mismatched_keys": [],
-            "error_msgs": [],
-        },
+def loading_info(*, missing: set[str], unexpected: set[str]) -> dict[str, object]:
+    return {
+        "missing_keys": sorted(missing),
+        "unexpected_keys": sorted(unexpected),
+        "mismatched_keys": [],
+        "error_msgs": [],
+    }
+
+
+def test_base_transition_without_optional_position_ids_key() -> None:
+    appeared = _validate_loading_info(
+        loading_info(missing=EXPECTED_BASE_MISSING, unexpected=EXPECTED_BASE_UNEXPECTED),
         expected_missing=EXPECTED_BASE_MISSING,
         expected_unexpected=EXPECTED_BASE_UNEXPECTED,
     )
-    with pytest.raises(RuntimeError, match="ELECTRA"):
+    assert not appeared
+
+
+def test_base_transition_with_exact_optional_position_ids_key() -> None:
+    appeared = _validate_loading_info(
+        loading_info(
+            missing=EXPECTED_BASE_MISSING,
+            unexpected=EXPECTED_BASE_UNEXPECTED | {OPTIONAL_POSITION_IDS_KEY},
+        ),
+        expected_missing=EXPECTED_BASE_MISSING,
+        expected_unexpected=EXPECTED_BASE_UNEXPECTED,
+    )
+    assert appeared
+
+
+def test_base_transition_rejects_another_unexpected_electra_key() -> None:
+    with pytest.raises(RuntimeError, match="Unexplained"):
         _validate_loading_info(
-            {
-                "missing_keys": ["electra.encoder.layer.0.weight"],
-                "unexpected_keys": [],
-                "mismatched_keys": [],
-                "error_msgs": [],
-            },
-            expected_missing=set(),
-            expected_unexpected=set(),
+            loading_info(
+                missing=EXPECTED_BASE_MISSING,
+                unexpected=EXPECTED_BASE_UNEXPECTED | {"electra.embeddings.token_type_ids"},
+            ),
+            expected_missing=EXPECTED_BASE_MISSING,
+            expected_unexpected=EXPECTED_BASE_UNEXPECTED,
         )
 
 
-def test_saved_checkpoint_requires_clean_loading_info() -> None:
-    _validate_loading_info(
-        {"missing_keys": [], "unexpected_keys": [], "mismatched_keys": [], "error_msgs": []},
+def test_base_transition_rejects_missing_trainable_encoder_parameter() -> None:
+    with pytest.raises(RuntimeError, match="Missing reusable ELECTRA"):
+        _validate_loading_info(
+            loading_info(
+                missing=EXPECTED_BASE_MISSING | {"electra.encoder.layer.0.weight"},
+                unexpected=EXPECTED_BASE_UNEXPECTED,
+            ),
+            expected_missing=EXPECTED_BASE_MISSING,
+            expected_unexpected=EXPECTED_BASE_UNEXPECTED,
+        )
+
+
+def test_downstream_checkpoint_reload_is_clean() -> None:
+    appeared = _validate_loading_info(
+        loading_info(missing=set(), unexpected=set()),
         expected_missing=set(),
         expected_unexpected=set(),
     )
-    with pytest.raises(RuntimeError, match="Unexplained"):
+    assert not appeared
+
+
+def test_downstream_reload_allows_only_optional_position_ids_buffer() -> None:
+    appeared = _validate_loading_info(
+        loading_info(missing=set(), unexpected={OPTIONAL_POSITION_IDS_KEY}),
+        expected_missing=set(),
+        expected_unexpected=set(),
+    )
+    assert appeared
+
+
+class FakeTensor:
+    def __init__(self, shape: tuple[int, ...]) -> None:
+        self.shape = shape
+
+
+class FakeFiniteResult:
+    def all(self) -> FakeFiniteResult:
+        return self
+
+    def item(self) -> bool:
+        return True
+
+
+class FakeTorch:
+    @staticmethod
+    def inference_mode() -> nullcontext[None]:
+        return nullcontext()
+
+    @staticmethod
+    def isfinite(_value: FakeTensor) -> FakeFiniteResult:
+        return FakeFiniteResult()
+
+
+class FakeTokenizer:
+    vocab_size = 32_000
+
+    def __init__(self) -> None:
+        self.called = False
+
+    def __len__(self) -> int:
+        return self.vocab_size
+
+    def __call__(self, *_texts: str, **kwargs: object) -> UserDict[str, FakeTensor]:
+        self.called = True
+        assert kwargs == {
+            "truncation": True,
+            "max_length": 16,
+            "return_tensors": "pt",
+        }
+        return UserDict(
+            {
+                "input_ids": FakeTensor((1, 7)),
+                "attention_mask": FakeTensor((1, 7)),
+            }
+        )
+
+
+class FakeClassifier:
+    def __init__(self) -> None:
+        self.config = SimpleNamespace(vocab_size=32_000, max_position_embeddings=512)
+        self.eval_called = False
+        self.forward_called = False
+
+    def named_parameters(self) -> list[tuple[str, object]]:
+        return [
+            ("electra.embeddings.word_embeddings.weight", object()),
+            ("classifier.out_proj.weight", object()),
+        ]
+
+    def eval(self) -> None:
+        self.eval_called = True
+
+    def __call__(self, **inputs: FakeTensor) -> SimpleNamespace:
+        self.forward_called = True
+        assert set(inputs) == {"input_ids", "attention_mask"}
+        return SimpleNamespace(logits=FakeTensor((1, 2)))
+
+
+def test_synthetic_forward_validates_compatible_model() -> None:
+    model = FakeClassifier()
+    tokenizer = FakeTokenizer()
+    result = _validate_synthetic_forward(model, tokenizer, torch_module=FakeTorch)
+    assert result == {"synthetic_sequence_length": 7, "max_position_embeddings": 512}
+    assert tokenizer.called
+    assert model.eval_called
+    assert model.forward_called
+
+
+def test_optional_position_ids_key_must_not_be_trainable() -> None:
+    model = FakeClassifier()
+    model.named_parameters = lambda: [(OPTIONAL_POSITION_IDS_KEY, object())]  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="unexpectedly became trainable"):
+        _validate_synthetic_forward(model, FakeTokenizer(), torch_module=FakeTorch)
+
+
+def test_loading_info_still_rejects_mismatches_and_errors() -> None:
+    with pytest.raises(RuntimeError, match="mismatch/errors"):
         _validate_loading_info(
             {
-                "missing_keys": ["classifier.weight"],
-                "unexpected_keys": [],
-                "mismatched_keys": [],
+                "missing_keys": sorted(EXPECTED_BASE_MISSING),
+                "unexpected_keys": sorted(EXPECTED_BASE_UNEXPECTED),
+                "mismatched_keys": [
+                    ("electra.embeddings.word_embeddings.weight", (1,), (2,))
+                ],
                 "error_msgs": [],
             },
-            expected_missing=set(),
-            expected_unexpected=set(),
+            expected_missing=EXPECTED_BASE_MISSING,
+            expected_unexpected=EXPECTED_BASE_UNEXPECTED,
         )
 
 

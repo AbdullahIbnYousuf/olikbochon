@@ -50,6 +50,7 @@ from .v3_selection import (
 from .v3_training import (
     EXPECTED_BASE_MISSING,
     EXPECTED_BASE_UNEXPECTED,
+    OPTIONAL_POSITION_IDS_KEY,
     TrainConfig,
     cleanup_cuda,
     encode_frame,
@@ -267,6 +268,10 @@ def run_kaggle_v3(input_root: Path = Path("/kaggle/input")) -> dict[str, Any]:
         "expected_unexpected_keys": sorted(EXPECTED_BASE_UNEXPECTED),
         "observed_missing_keys": sorted(transition_info["missing_keys"]),
         "observed_unexpected_keys": sorted(transition_info["unexpected_keys"]),
+        "allowed_optional_unexpected_key": OPTIONAL_POSITION_IDS_KEY,
+        "base_transition_optional_position_ids_buffer_appeared": (
+            OPTIONAL_POSITION_IDS_KEY in transition_info["unexpected_keys"]
+        ),
         "mismatched_key_count": len(transition_info["mismatched_keys"]),
         "error_message_count": len(transition_info["error_msgs"]),
         "passed": True,
@@ -292,8 +297,9 @@ def run_kaggle_v3(input_root: Path = Path("/kaggle/input")) -> dict[str, Any]:
     stage_model, stage_loading_info = load_saved_classifier(STAGE_A_DIRECTORY, tokenizer)
     del stage_model
     cleanup_cuda()
-    if any(stage_loading_info[name] for name in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")):
-        raise RuntimeError("Selected Stage A checkpoint did not reload cleanly")
+    loading_validation["stage_a_reload_optional_position_ids_buffer_appeared"] = (
+        OPTIONAL_POSITION_IDS_KEY in stage_loading_info.get("unexpected_keys", [])
+    )
 
     official_config = TrainConfig(epochs=4, learning_rate=1e-5)
     arm_a = run_cross_validation(
@@ -377,8 +383,11 @@ def run_kaggle_v3(input_root: Path = Path("/kaggle/input")) -> dict[str, Any]:
     if test["id"].duplicated().any() or sample_submission["id"].duplicated().any():
         raise RuntimeError("Version 3 requires unique test and sample-submission IDs")
     encoded_test = encode_frame(test, tokenizer, with_labels=False)
-    test_probabilities, inference_peak = infer_probabilities(
+    test_probabilities, inference_peak, final_loading_info = infer_probabilities(
         FINAL_MODEL_DIRECTORY, tokenizer, encoded_test, batch_size=8
+    )
+    loading_validation["final_reload_optional_position_ids_buffer_appeared"] = (
+        OPTIONAL_POSITION_IDS_KEY in final_loading_info.get("unexpected_keys", [])
     )
     deployed_predictions = predictions_from_label1(
         test_probabilities, threshold_decision.deployed_threshold

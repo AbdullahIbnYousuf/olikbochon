@@ -7,6 +7,7 @@ import json
 import math
 import random
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -32,6 +33,7 @@ EXPECTED_BASE_UNEXPECTED = {
     "discriminator_predictions.dense_prediction.bias",
     "discriminator_predictions.dense_prediction.weight",
 }
+OPTIONAL_POSITION_IDS_KEY = "electra.embeddings.position_ids"
 ID2LABEL = {0: "HALLUCINATED", 1: "FAITHFUL"}
 LABEL2ID = {"HALLUCINATED": 0, "FAITHFUL": 1}
 
@@ -287,20 +289,96 @@ class DynamicPairCollator:
 
 def _validate_loading_info(
     info: dict[str, Any], *, expected_missing: set[str], expected_unexpected: set[str]
-) -> None:
+) -> bool:
+    """Validate trainable transition keys and return optional-buffer presence."""
     missing = set(info.get("missing_keys", []))
     unexpected = set(info.get("unexpected_keys", []))
     mismatched = list(info.get("mismatched_keys", []))
     errors = list(info.get("error_msgs", []))
     if any(key.startswith("electra.") for key in missing):
         raise RuntimeError("Missing reusable ELECTRA encoder parameters")
-    if missing != expected_missing or unexpected != expected_unexpected:
+    optional_position_ids_appeared = OPTIONAL_POSITION_IDS_KEY in unexpected
+    unexplained_unexpected = unexpected - {OPTIONAL_POSITION_IDS_KEY}
+    if missing != expected_missing or unexplained_unexpected != expected_unexpected:
         raise RuntimeError(
             f"Unexplained loading keys: missing={sorted(missing)}, "
             f"unexpected={sorted(unexpected)}"
         )
     if mismatched or errors:
         raise RuntimeError(f"Model loading mismatch/errors: {mismatched!r} / {errors!r}")
+    return optional_position_ids_appeared
+
+
+def _validate_synthetic_forward(
+    model: Any, tokenizer: Any, *, torch_module: Any | None = None
+) -> dict[str, int]:
+    """Validate vocabulary, positions, encoder parameters, and a safe CPU forward pass."""
+    validate_tokenizer_model_vocabulary(tokenizer, model.config)
+    maximum_positions = getattr(model.config, "max_position_embeddings", None)
+    if (
+        isinstance(maximum_positions, bool)
+        or not isinstance(maximum_positions, int)
+        or maximum_positions < 4
+    ):
+        raise RuntimeError(
+            f"Invalid model max_position_embeddings configuration: {maximum_positions!r}"
+        )
+    parameter_names = {name for name, _parameter in model.named_parameters()}
+    if not any(name.startswith("electra.") for name in parameter_names):
+        raise RuntimeError("Loaded classifier exposes no trainable ELECTRA encoder parameters")
+    if OPTIONAL_POSITION_IDS_KEY in parameter_names:
+        raise RuntimeError("Optional position-ID compatibility key unexpectedly became trainable")
+
+    synthetic = tokenizer(
+        "বাংলা তথ্য যাচাই",
+        "সংক্ষিপ্ত বিশ্বস্ত উত্তর",
+        truncation=True,
+        max_length=min(16, maximum_positions),
+        return_tensors="pt",
+    )
+    if not isinstance(synthetic, Mapping) or "input_ids" not in synthetic:
+        raise RuntimeError("Tokenizer did not produce synthetic input_ids")
+    input_shape = tuple(synthetic["input_ids"].shape)
+    if len(input_shape) != 2 or input_shape[0] != 1 or not 1 <= input_shape[1] <= maximum_positions:
+        raise RuntimeError(
+            f"Synthetic tokenizer output has invalid shape for configured positions: {input_shape}"
+        )
+
+    if torch_module is None:
+        import torch as torch_module
+
+    model.eval()
+    with torch_module.inference_mode():
+        output = model(**synthetic)
+    logits = getattr(output, "logits", None)
+    if logits is None or tuple(logits.shape) != (1, 2):
+        observed_shape = None if logits is None else tuple(logits.shape)
+        raise RuntimeError(f"Synthetic classifier forward returned invalid logits: {observed_shape}")
+    if not bool(torch_module.isfinite(logits).all().item()):
+        raise RuntimeError("Synthetic classifier forward produced non-finite logits")
+    return {
+        "synthetic_sequence_length": input_shape[1],
+        "max_position_embeddings": maximum_positions,
+    }
+
+
+def _validate_loaded_classifier(
+    model: Any,
+    tokenizer: Any,
+    info: dict[str, Any],
+    *,
+    expected_missing: set[str],
+    expected_unexpected: set[str],
+) -> bool:
+    """Apply strict loading-key and executable compatibility validation."""
+    optional_position_ids_appeared = _validate_loading_info(
+        info,
+        expected_missing=expected_missing,
+        expected_unexpected=expected_unexpected,
+    )
+    _validate_synthetic_forward(model, tokenizer)
+    resolve_faithful_logit_index(model.config, logits_dimension=2)
+    return optional_position_ids_appeared
 
 
 def load_tokenizer(model_path: Path) -> Any:
@@ -325,13 +403,13 @@ def load_base_classifier(model_path: Path, tokenizer: Any) -> tuple[Any, dict[st
         trust_remote_code=False,
         output_loading_info=True,
     )
-    _validate_loading_info(
+    _validate_loaded_classifier(
+        model,
+        tokenizer,
         info,
         expected_missing=EXPECTED_BASE_MISSING,
         expected_unexpected=EXPECTED_BASE_UNEXPECTED,
     )
-    validate_tokenizer_model_vocabulary(tokenizer, model.config)
-    resolve_faithful_logit_index(model.config, logits_dimension=2)
     return model, info
 
 
@@ -345,13 +423,17 @@ def load_saved_classifier(checkpoint: Path, tokenizer: Any) -> tuple[Any, dict[s
         trust_remote_code=False,
         output_loading_info=True,
     )
-    _validate_loading_info(info, expected_missing=set(), expected_unexpected=set())
+    _validate_loaded_classifier(
+        model,
+        tokenizer,
+        info,
+        expected_missing=set(),
+        expected_unexpected=set(),
+    )
     if model.config.label2id != LABEL2ID or {
         int(key): value for key, value in model.config.id2label.items()
     } != ID2LABEL:
         raise RuntimeError("Saved classifier label mappings changed")
-    validate_tokenizer_model_vocabulary(tokenizer, model.config)
-    resolve_faithful_logit_index(model.config, logits_dimension=2)
     return model, info
 
 
@@ -528,14 +610,14 @@ def infer_probabilities(
     encoded: EncodedFrame,
     *,
     batch_size: int = 8,
-) -> tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int, dict[str, Any]]:
     """Reload the frozen classifier and run aggregate-safe batched inference."""
     import torch
     from torch.utils.data import DataLoader
 
     if not torch.cuda.is_available():
         raise RuntimeError("Version 3 inference requires CUDA")
-    model, _ = load_saved_classifier(checkpoint, tokenizer)
+    model, loading_info = load_saved_classifier(checkpoint, tokenizer)
     model.to(torch.device("cuda"))
     loader = DataLoader(
         TokenizedRows(encoded),
@@ -548,7 +630,7 @@ def infer_probabilities(
     peak = int(torch.cuda.max_memory_allocated())
     del model, loader
     cleanup_cuda()
-    return evaluation.probabilities, peak
+    return evaluation.probabilities, peak, loading_info
 
 
 def is_cuda_oom(error: BaseException) -> bool:
