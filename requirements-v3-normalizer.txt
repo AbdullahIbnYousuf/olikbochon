@@ -1,0 +1,5 @@
+# Runtime dependencies declared by csebuetnlp/normalizer at pinned commit
+# d405944dde5ceeacb7c2fd3245ae2a9dea5f35c9.
+emoji==1.4.2
+ftfy==6.0.3
+regex==2026.7.10
