@@ -14,6 +14,7 @@ V3_COMPATIBLE = "v3_compatible"
 STRUCTURED = "structured"
 ROUTED = "routed"
 SERIALIZATIONS = (V3_COMPATIBLE, STRUCTURED, ROUTED)
+ABSENT_CONTEXT_SENTINELS = frozenset({"[null]", "null", "none", "n/a"})
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,14 @@ def _required_text(value: Any, field_name: str) -> str:
     return normalize_default(str(value))
 
 
+def official_context_is_present(value: Any) -> bool:
+    """Apply the authenticated official-sample sentinel policy for V4 routing."""
+    if not raw_context_is_present(value):
+        return False
+    normalized = normalize_default(str(value)).strip().casefold()
+    return normalized not in ABSENT_CONTEXT_SENTINELS
+
+
 def prepare_v4_input(
     prompt: Any,
     context: Any,
@@ -87,11 +96,11 @@ def prepare_v4_input(
         raise ValueError(f"Unknown serialization {serialization!r}; expected {SERIALIZATIONS}")
     normalized_prompt = _required_text(prompt, "prompt_bn")
     normalized_response = _required_text(response, "response_bn")
-    present = raw_context_is_present(context)
+    present = official_context_is_present(context)
     normalized_context = normalize_default(str(context)) if present else ""
 
     if serialization == V3_COMPATIBLE:
-        pair = build_transformer_pair(prompt, context, response)
+        pair = build_transformer_pair(prompt, context if present else None, response)
         return PreparedV4Input(
             serialization,
             pair.sequence_a,

@@ -7,6 +7,12 @@ and offline inference over its 15 selected checkpoints. It used the authenticate
 299-row labeled sample only. No training, test inference, public data, row text, or
 row-level probability persistence occurred.
 
+Subsequent route audit correction (2026-07-18): these diagnostics remain numerically
+valid for the saved checkpoints and the legacy V3-compatible preprocessing that actually
+ran. They do not validate schema-aware V4 preprocessing, because 167 literal `[NULL]`
+contexts were encoded as present. Any route-specific interpretation is invalid. The
+historical-control run is paused pending approval after this correction.
+
 ## Calibration findings
 
 Nine of 15 fold checkpoints predicted label 1 for every validation row at threshold 0.50.
@@ -124,6 +130,9 @@ orientation bug was found. The evidence supports calibration/schedule/length/che
 effects rather than a broken probability implementation.
 
 ## Predeclared historical-config control
+
+Status: paused. Do not execute this control until its intentionally historical sentinel
+semantics and the corrected V4 comparison policy are explicitly approved.
 
 The proposed `v3_historical_control` uses the historical V3 preprocessing implementation,
 length 512, four epochs, learning rate `1e-5`, weight decay `0.01`, warmup `0.10`, batch 8,

@@ -18,7 +18,6 @@ import numpy as np
 
 from .data_loading import OFFICIAL_SAMPLE_SHA256, load_labeled_json, sha256_file
 from .metrics import classification_metrics, predictions_from_label1, subgroup_metrics
-from .v3_preprocessing import raw_context_is_present
 from .v3_training import encode_frame as encode_v3_frame
 from .v3_training import subset_encoded
 from .v4_diagnostics import probability_diagnostics, selected_epoch_distribution
@@ -28,6 +27,7 @@ from .v4_preprocessing import (
     FieldBudget,
     encode_comparison_baseline,
     encode_field_aware,
+    official_context_is_present,
     prepare_v4_input,
     truncation_statistics,
 )
@@ -134,7 +134,7 @@ def prepare_experiment(
 
 def context_presence(frame: Any) -> tuple[bool, ...]:
     """Return aggregate-safe context routing flags without serializing row text."""
-    return tuple(raw_context_is_present(value) for value in frame["context"])
+    return tuple(official_context_is_present(value) for value in frame["context"])
 
 
 def repository_root() -> Path:
@@ -605,7 +605,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         raise RuntimeError("Frozen repeated grouped folds were not reproduced exactly")
     truth = np.asarray(labels, dtype=np.int64)
     group_ids = np.asarray(folds.audit.group_ids, dtype=object)
-    contexts = np.asarray(context_presence(frame), dtype=bool)
+    contexts = np.asarray(all_encoded.context_present, dtype=bool)
     output_path.mkdir(parents=True)
     fold_metadata_root = output_path / "fold_metadata"
     fold_metadata_root.mkdir()

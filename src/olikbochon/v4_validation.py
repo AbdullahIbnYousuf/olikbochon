@@ -10,6 +10,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 
 from .metrics import classification_metrics, predictions_from_label1, subgroup_metrics
 from .v3_data import GroupAudit, build_official_groups
+from .v4_preprocessing import official_context_is_present
 
 
 VALIDATION_SEEDS = (17, 29, 43)
@@ -118,8 +119,13 @@ def make_repeated_grouped_folds(
 
 
 def build_repeated_official_folds(frame: Any) -> RepeatedGroupedFolds:
-    """Reuse the authenticated V3 grouping rules with the V4 seed set."""
-    audit = build_official_groups(frame)
+    """Build V4 folds with official sentinel-aware context grouping."""
+    routed_frame = frame.copy()
+    routed_frame["context"] = [
+        value if official_context_is_present(value) else None
+        for value in routed_frame["context"]
+    ]
+    audit = build_official_groups(routed_frame)
     return make_repeated_grouped_folds(frame["label"].to_numpy(dtype=np.int64), audit)
 
 

@@ -6,6 +6,17 @@ Gate 4 GPU smoke training passed. Gate 5 completed all 15 authorized fits but th
 V3-compatible baseline failed the frozen threshold-0.50 class-collapse acceptance guard.
 No submission or competition-test inference exists.
 
+Route audit correction (2026-07-18): the authenticated sample contains 167 literal
+`[NULL]` context sentinels and two actual nulls. The completed smoke and reproduction
+runs inherited V3's truthy-string behavior and therefore encoded those 167 sentinels as
+context-present. Their saved losses, predictions, overall metrics, reload checks, and
+calibration statistics remain exact records of the pipeline that ran, and their grouped
+fold indices remain unchanged. They are not valid measurements of the corrected,
+schema-aware V4 preprocessing path. All recorded context-present/null subgroup metrics
+and the 297/2 truncation route counts are invalid for V4 route interpretation. Corrected
+V4 counts are 130 context-present and 169 context-absent. No artifact was deleted and no
+training was rerun.
+
 ## Frozen family
 
 | Order | Configuration | Result status |
@@ -38,7 +49,8 @@ Passed on 2026-07-17 at commit `584fbc0c11f6fab2bc1cc7a7c250c752fad5c73b`.
   `[[0, 28], [0, 33]]`;
 - context diagnostics: context-present macro F1 `0.3548387096774194` over 60 rows;
   null-context macro F1 `0.0` over one row;
-- aggregate token audit over 299 official rows: 297 context-present and two null-context;
+- legacy-at-run-time token audit over 299 official rows: 297 context-present and two
+  null-context; this route split is invalid for schema-aware V4 interpretation;
   no prompt, context, or response truncation was reported by the comparison encoder;
 - authenticated snapshot: the approved repository-ignored BanglaBERT revision
   `9ce791f330578f50da6bc52b54205166fb5d1c8c`;
@@ -154,8 +166,9 @@ losses are also retained in ignored fold metadata.
 - group overlap: zero in every fold;
 - checkpoint reload: exact predictions, metrics, and validation loss for all 15 folds;
 - retained optimizer/scheduler states: none;
-- aggregate token audit: 299 rows, 297 context-present, two null-context, and no reported
-  prompt/context/response truncation;
+- legacy-at-run-time token audit: 299 rows, 297 context-present, two null-context, and no
+  reported prompt/context/response truncation; the route counts are invalid for
+  schema-aware V4 interpretation;
 - classification: **failed baseline reproduction** because class collapse persisted at the
   predeclared primary threshold 0.50. The healthy 0.54 grid result is a diagnostic and is
   not permission to accept or deploy the candidate.

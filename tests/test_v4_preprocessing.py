@@ -2,16 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from olikbochon.v3_preprocessing import build_transformer_pair
+import numpy as np
+import pandas as pd
+import pytest
+
+from olikbochon.v3_preprocessing import build_transformer_pair, raw_context_is_present
 from olikbochon.v4_preprocessing import (
     ROUTED,
     STRUCTURED,
     V3_COMPATIBLE,
     FieldBudget,
     encode_field_aware,
+    official_context_is_present,
     prepare_v4_input,
     truncation_statistics,
 )
+from olikbochon.v4_runner import context_presence
 
 
 class CharacterTokenizer:
@@ -86,6 +92,45 @@ def test_v3_compatible_serialization_parity() -> None:
         v3.sequence_b,
         v3.context_present,
     )
+
+
+@pytest.mark.parametrize("value", [None, np.nan, pd.NA, "", " \t\n"])
+def test_v3_and_v4_agree_on_ordinary_missing_context(value: Any) -> None:
+    assert not raw_context_is_present(value)
+    assert not official_context_is_present(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["[NULL]", "[null]", " [NuLl] ", "NULL", "none", "N/A", " n/a "],
+)
+def test_v4_treats_normalized_official_sentinels_as_absent(value: str) -> None:
+    assert raw_context_is_present(value)
+    assert not official_context_is_present(value)
+    prepared = prepare_v4_input("question", value, "answer", serialization=V3_COMPATIBLE)
+    assert not prepared.context_present
+    assert "[CONTEXT_PRESENT]\n0" in prepared.sequence_a
+    assert prepared.context == ""
+
+
+def test_v4_detects_sentinel_after_unicode_normalization() -> None:
+    assert not official_context_is_present("\uff3b\uff2e\uff35\uff2c\uff2c\uff3d")
+
+
+def test_v3_and_v4_agree_on_ordinary_bengali_context() -> None:
+    context = "\u098f\u099f\u09bf \u098f\u0995\u099f\u09bf \u09b8\u09be\u09a7\u09be\u09b0\u09a3 \u09aa\u09cd\u09b0\u09b8\u0999\u09cd\u0997\u0964"
+    assert raw_context_is_present(context)
+    assert official_context_is_present(context)
+    assert prepare_v4_input(
+        "question", context, "answer", serialization=ROUTED
+    ).context_present
+
+
+def test_runner_and_v4_preparation_use_the_same_route_policy() -> None:
+    values = [None, np.nan, "", " [NULL] ", "NULL", "evidence"]
+    frame = pd.DataFrame({"context": values})
+    expected = tuple(official_context_is_present(value) for value in frame["context"])
+    assert context_presence(frame) == expected == (False, False, False, False, False, True)
 
 
 def test_structured_serialization_uses_plain_markers_and_null() -> None:
