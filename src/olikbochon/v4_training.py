@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -49,6 +52,24 @@ class SmokeTrainingResult:
     optimizer_steps: int
     training_rows_seen: int
     peak_gpu_vram_bytes: int
+
+
+@dataclass(frozen=True)
+class ReproductionFoldResult:
+    """One selected grouped-fold checkpoint and aggregate-only diagnostics."""
+
+    evaluation: SmokeEvaluation
+    selected_epoch: int
+    epoch_history: tuple[dict[str, Any], ...]
+    initial_training_loss: float
+    final_training_loss: float
+    mean_training_loss: float
+    optimizer_steps: int
+    training_rows_seen: int
+    runtime_seconds: float
+    peak_gpu_vram_bytes: int
+    checkpoint_size_bytes: int
+    reload: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -316,6 +337,177 @@ def evaluate_offline_smoke_checkpoint(
     del model, tokenizer
     cleanup_cuda()
     return evaluation, loading, peak
+
+
+def train_reproduction_fold(
+    model_path: Path,
+    train_data: EncodedFrame,
+    validation_data: EncodedFrame,
+    checkpoint_directory: Path,
+    *,
+    seed: int,
+    config: V4TrainingConfig = V4TrainingConfig(),
+) -> ReproductionFoldResult:
+    """Train one frozen V4 fold from the authenticated base and verify its checkpoint."""
+    import torch
+    from torch.utils.data import DataLoader
+    from transformers import get_linear_schedule_with_warmup
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("V4 reproduction requires CUDA; CPU fallback is prohibited")
+    if checkpoint_directory.exists():
+        raise ValueError("Reproduction checkpoint directory must not already exist")
+    started = perf_counter()
+    tokenizer, model, _loading = load_offline_base(model_path)
+    set_all_seeds(seed)
+    torch.cuda.reset_peak_memory_stats()
+    device = torch.device("cuda")
+    model.to(device)
+    generator = torch.Generator().manual_seed(seed)
+    loader = DataLoader(
+        TokenizedRows(train_data),
+        batch_size=config.batch_size,
+        shuffle=True,
+        generator=generator,
+        num_workers=0,
+        collate_fn=DynamicPairCollator(tokenizer),
+    )
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.learning_rate,
+        weight_decay=0.01,
+    )
+    updates_per_epoch = math.ceil(len(loader) / config.gradient_accumulation)
+    total_updates = updates_per_epoch * config.epochs
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=round(total_updates * 0.10),
+        num_training_steps=total_updates,
+    )
+    scaler = torch.amp.GradScaler("cuda", enabled=True)
+    initial_loss: float | None = None
+    final_loss: float | None = None
+    all_loss_total = 0.0
+    all_batch_count = 0
+    optimizer_steps = 0
+    rows_seen = 0
+    best_rank: tuple[float, float, int] | None = None
+    selected_epoch: int | None = None
+    selected_evaluation: SmokeEvaluation | None = None
+    history: list[dict[str, Any]] = []
+    for epoch in range(1, config.epochs + 1):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        pending_batches = 0
+        epoch_loss_total = 0.0
+        epoch_batch_count = 0
+        for batch_index, batch in enumerate(loader):
+            batch = {key: value.to(device) for key, value in batch.items()}
+            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
+                output = model(**batch)
+                loss = output.loss
+            if loss is None or not bool(torch.isfinite(loss).item()):
+                raise RuntimeError("Reproduction training produced a non-finite loss")
+            observed_loss = float(loss.detach().cpu())
+            if initial_loss is None:
+                initial_loss = observed_loss
+            final_loss = observed_loss
+            epoch_loss_total += observed_loss
+            epoch_batch_count += 1
+            all_loss_total += observed_loss
+            all_batch_count += 1
+            rows_seen += int(batch["labels"].shape[0])
+            pending_batches += 1
+            scaler.scale(loss / config.gradient_accumulation).backward()
+            last_batch = batch_index + 1 == len(loader)
+            if pending_batches == config.gradient_accumulation or last_batch:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
+                pending_batches = 0
+                optimizer_steps += 1
+        evaluation = _evaluate_smoke_model(
+            model,
+            tokenizer,
+            validation_data,
+            batch_size=config.batch_size,
+        )
+        rank = (
+            float(evaluation.metrics["macro_f1"]),
+            -float(evaluation.validation_loss),
+            -epoch,
+        )
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            selected_epoch = epoch
+            selected_evaluation = evaluation
+            if checkpoint_directory.exists():
+                shutil.rmtree(checkpoint_directory)
+            model.save_pretrained(checkpoint_directory, safe_serialization=True)
+            tokenizer.save_pretrained(checkpoint_directory)
+        history.append(
+            {
+                "epoch": epoch,
+                "training_loss": epoch_loss_total / epoch_batch_count,
+                "validation_loss": evaluation.validation_loss,
+                **evaluation.metrics,
+            }
+        )
+    if initial_loss is None or final_loss is None or selected_epoch is None:
+        raise RuntimeError("Reproduction fold did not complete its frozen training schedule")
+    if selected_evaluation is None or optimizer_steps != total_updates:
+        raise RuntimeError("Reproduction fold returned incomplete checkpoint state")
+    training_peak = int(torch.cuda.max_memory_allocated())
+    del model, optimizer, scheduler, scaler, loader
+    cleanup_cuda()
+    reloaded, reload_info, reload_peak = evaluate_offline_smoke_checkpoint(
+        checkpoint_directory,
+        validation_data,
+        batch_size=config.batch_size,
+    )
+    selected_predictions = predictions_from_label1(selected_evaluation.probabilities, 0.5)
+    reloaded_predictions = predictions_from_label1(reloaded.probabilities, 0.5)
+    predictions_match = bool(np.array_equal(selected_predictions, reloaded_predictions))
+    metrics_match = selected_evaluation.metrics == reloaded.metrics
+    loss_match = bool(
+        np.isclose(
+            selected_evaluation.validation_loss,
+            reloaded.validation_loss,
+            rtol=0,
+            atol=1e-12,
+        )
+    )
+    if not predictions_match or not metrics_match or not loss_match:
+        raise RuntimeError(
+            "Reproduction checkpoint reload mismatch: "
+            f"predictions={predictions_match}, metrics={metrics_match}, loss={loss_match}"
+        )
+    checkpoint_size = sum(
+        path.stat().st_size for path in checkpoint_directory.rglob("*") if path.is_file()
+    )
+    return ReproductionFoldResult(
+        reloaded,
+        selected_epoch,
+        tuple(history),
+        initial_loss,
+        final_loss,
+        all_loss_total / all_batch_count,
+        optimizer_steps,
+        rows_seen,
+        perf_counter() - started,
+        max(training_peak, reload_peak),
+        checkpoint_size,
+        {
+            "predictions_match": predictions_match,
+            "metrics_match": metrics_match,
+            "validation_loss_match": loss_match,
+            "loading_missing_keys": len(reload_info.get("missing_keys", [])),
+            "loading_unexpected_keys": len(reload_info.get("unexpected_keys", [])),
+        },
+    )
 
 
 def artifact_root(repository_root: Path) -> Path:

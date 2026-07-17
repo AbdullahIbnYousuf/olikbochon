@@ -11,9 +11,14 @@ from olikbochon.v4_runner import (
     official_training_path,
     require_approved_model_path,
     require_smoke_output_path,
+    validate_reproduction_arguments,
     validate_smoke_arguments,
 )
-from olikbochon.v4_training import require_local_model_path, resolve_artifact_path
+from olikbochon.v4_training import (
+    V4TrainingConfig,
+    require_local_model_path,
+    resolve_artifact_path,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,19 +52,21 @@ def test_artifact_paths_are_confined_to_explicitly_ignored_v4_root(tmp_path: Pat
         resolve_artifact_path(tmp_path, Path("../../outside.txt"))
 
 
-def test_smoke_cli_help_exposes_only_the_bounded_interface() -> None:
+def test_v4_cli_help_exposes_only_the_bounded_interfaces() -> None:
     help_text = build_cli_parser().format_help()
     for option in (
         "--mode",
         "--model-path",
         "--candidate",
         "--seed",
+        "--seeds",
+        "--folds",
         "--max-steps",
         "--max-length",
         "--output-dir",
     ):
         assert option in help_text
-    assert "{smoke}" in help_text
+    assert "{smoke,reproduce}" in help_text
     assert f"{{{SMOKE_CANDIDATE}}}" in help_text
 
 
@@ -106,3 +113,82 @@ def test_smoke_cli_argument_validation_is_capped_and_local(tmp_path: Path) -> No
     args.max_steps = 21
     with pytest.raises(ValueError, match="between 1 and 20"):
         validate_smoke_arguments(args, tmp_path)
+
+
+def test_reproduce_cli_requires_the_exact_frozen_design(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("artifacts/v4/\n", encoding="utf-8")
+    model = (tmp_path / "data" / "models" / "snapshot").resolve()
+    model.mkdir(parents=True)
+    output = (tmp_path / "artifacts" / "v4" / "v3_reproduction").resolve()
+    parser = build_cli_parser()
+    args = parser.parse_args(
+        [
+            "--mode",
+            "reproduce",
+            "--model-path",
+            str(model),
+            "--candidate",
+            SMOKE_CANDIDATE,
+            "--seeds",
+            "17",
+            "29",
+            "43",
+            "--folds",
+            "5",
+            "--max-length",
+            "256",
+            "--output-dir",
+            str(output),
+        ]
+    )
+    assert validate_reproduction_arguments(args, tmp_path) == (model, output)
+    args.seeds = [17, 43, 29]
+    with pytest.raises(ValueError, match="17 29 43 in that order"):
+        validate_reproduction_arguments(args, tmp_path)
+    args.seeds = [17, 29, 43]
+    args.folds = 4
+    with pytest.raises(ValueError, match="folds 5"):
+        validate_reproduction_arguments(args, tmp_path)
+
+
+def test_reproduction_training_configuration_remains_frozen() -> None:
+    config = V4TrainingConfig()
+    assert config.epochs == 3
+    assert config.learning_rate == 2e-5
+    assert config.batch_size == 8
+    assert config.gradient_accumulation == 2
+    assert config.maximum_length == 256
+    assert config.mixed_precision == "fp16"
+    assert config.checkpoint_policy == "validation_macro_f1_then_loss_then_earlier_epoch"
+
+
+def test_reproduce_cli_rejects_smoke_controls_and_other_output_names(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("artifacts/v4/\n", encoding="utf-8")
+    model = (tmp_path / "data" / "models" / "snapshot").resolve()
+    model.mkdir(parents=True)
+    parser = build_cli_parser()
+    args = parser.parse_args(
+        [
+            "--mode",
+            "reproduce",
+            "--model-path",
+            str(model),
+            "--candidate",
+            SMOKE_CANDIDATE,
+            "--seeds",
+            "17",
+            "29",
+            "43",
+            "--folds",
+            "5",
+            "--max-length",
+            "256",
+            "--output-dir",
+            str((tmp_path / "artifacts" / "v4" / "other").resolve()),
+        ]
+    )
+    with pytest.raises(ValueError, match="v3_reproduction"):
+        validate_reproduction_arguments(args, tmp_path)
+    args.seed = 17
+    with pytest.raises(ValueError, match="does not accept"):
+        validate_reproduction_arguments(args, tmp_path)
