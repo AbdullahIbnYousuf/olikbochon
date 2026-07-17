@@ -53,7 +53,7 @@ NEAR_LENGTH_RATIO = 0.90
 
 @dataclass(frozen=True)
 class V3Files:
-    """Resolved paths for the exact three-input Version 3 contract."""
+    """Resolved paths for the three independently discovered Version 3 roles."""
 
     public_train: Path
     public_validation: Path
@@ -142,19 +142,6 @@ def _inside(path: Path, root: Path) -> bool:
     return True
 
 
-def _identical(paths: list[Path]) -> bool:
-    return bool(paths) and len({sha256_file(path) for path in paths}) == 1
-
-
-def _select_identical(roots: list[Path], filename: str) -> Path:
-    paths = [root / filename for root in roots]
-    if not all(path.is_file() for path in paths):
-        raise DiscoveryError(f"Every public root must contain {filename!r}")
-    if not _identical(paths):
-        raise DiscoveryError(f"Public copies of {filename!r} are not byte-identical")
-    return min(paths, key=str)
-
-
 def _discover_public(root: Path) -> tuple[list[Path], Path, Path, Path | None]:
     train_roots = {path.parent for path in root.rglob(PUBLIC_TRAIN_FILENAME) if path.is_file()}
     valid_roots = {
@@ -163,41 +150,53 @@ def _discover_public(root: Path) -> tuple[list[Path], Path, Path, Path | None]:
     roots = sorted(train_roots & valid_roots, key=str)
     if not roots:
         raise DiscoveryError("No coherent public-data root contains both labeled splits")
-    train = _select_identical(roots, PUBLIC_TRAIN_FILENAME)
-    validation = _select_identical(roots, PUBLIC_VALIDATION_FILENAME)
-    aggregates = [directory / PUBLIC_AGGREGATE_FILENAME for directory in roots]
-    existing = [path for path in aggregates if path.is_file()]
-    aggregate: Path | None = None
-    if existing:
-        if len(existing) != len(roots) or not _identical(existing):
-            raise DiscoveryError("Optional public aggregate copies are incomplete or conflicting")
-        aggregate = min(existing, key=str)
-    return roots, train, validation, aggregate
+    if len(roots) > 1:
+        raise DiscoveryError(
+            "More than one coherent public-data root was found: "
+            + "; ".join(str(path.resolve()) for path in roots)
+        )
+    public_root = roots[0]
+    aggregate_candidate = public_root / PUBLIC_AGGREGATE_FILENAME
+    aggregate = aggregate_candidate if aggregate_candidate.is_file() else None
+    return (
+        roots,
+        public_root / PUBLIC_TRAIN_FILENAME,
+        public_root / PUBLIC_VALIDATION_FILENAME,
+        aggregate,
+    )
 
 
 def _discover_competition(root: Path, public_roots: list[Path]) -> tuple[Path, Path]:
-    candidates: list[tuple[int, Path]] = []
+    candidates: dict[Path, tuple[int, Path]] = {}
+    quarantined_candidates: set[Path] = set()
     for preference, name in enumerate(SAMPLE_NAMES):
         for sample in root.rglob(name):
             candidate = sample.parent
-            if any(_inside(candidate, public) for public in public_roots):
+            if not (
+                (candidate / OFFICIAL_FILENAME).is_file()
+                and (candidate / TEST_FILENAME).is_file()
+            ):
                 continue
-            if (candidate / OFFICIAL_FILENAME).is_file() and (candidate / TEST_FILENAME).is_file():
-                candidates.append((preference, candidate))
+            if any(_inside(candidate, public) for public in public_roots):
+                quarantined_candidates.add(candidate)
+                continue
+            previous = candidates.get(candidate)
+            if previous is None or preference < previous[0]:
+                candidates[candidate] = (preference, sample)
     if not candidates:
+        if quarantined_candidates:
+            raise DiscoveryError(
+                "A coherent competition root was found only inside the quarantined "
+                "public-data root"
+            )
         raise DiscoveryError("No coherent non-public competition root was found")
-    signatures = {
-        (
-            sha256_file(directory / OFFICIAL_FILENAME),
-            sha256_file(directory / TEST_FILENAME),
-            sha256_file(directory / SAMPLE_NAMES[preference]),
+    if len(candidates) > 1:
+        raise DiscoveryError(
+            "More than one coherent competition root was found: "
+            + "; ".join(str(path.resolve()) for path in sorted(candidates, key=str))
         )
-        for preference, directory in candidates
-    }
-    if len(signatures) != 1:
-        raise DiscoveryError("Conflicting coherent competition roots were found")
-    preference, directory = min(candidates, key=lambda item: (item[0], str(item[1])))
-    return directory, directory / SAMPLE_NAMES[preference]
+    directory, (_, sample) = next(iter(candidates.items()))
+    return directory, sample
 
 
 def authenticate_model_directory(path: Path) -> dict[str, Any]:
@@ -231,34 +230,62 @@ def authenticate_model_directory(path: Path) -> dict[str, Any]:
 
 
 def _discover_model(root: Path) -> Path:
-    candidates = sorted({path.parent for path in root.rglob("pytorch_model.bin")}, key=str)
+    candidate_sets = [
+        {path.parent for path in root.rglob(filename) if path.is_file()}
+        for filename in MODEL_REQUIRED_FILES
+    ]
+    candidates = sorted(set.intersection(*candidate_sets), key=str)
+    if not candidates:
+        raise DiscoveryError(
+            "No directory contains all required official BanglaBERT snapshot files"
+        )
     valid: list[Path] = []
+    failures: list[tuple[Path, str]] = []
     for candidate in candidates:
         try:
             authenticate_model_directory(candidate)
-        except DiscoveryError:
-            continue
-        valid.append(candidate)
+        except DiscoveryError as exc:
+            failures.append((candidate, str(exc)))
+        else:
+            valid.append(candidate)
     if not valid:
-        raise DiscoveryError("No authenticated official BanglaBERT snapshot was found")
+        details = "; ".join(
+            f"{path.resolve()}: {message}" for path, message in failures
+        )
+        raise DiscoveryError(f"BanglaBERT model authentication failed: {details}")
     if len(valid) > 1:
-        signatures = {
-            tuple(sha256_file(path / name) for name in MODEL_REQUIRED_FILES) for path in valid
+        raise DiscoveryError(
+            "More than one authenticated BanglaBERT model root was found: "
+            + "; ".join(str(path.resolve()) for path in valid)
+        )
+    return valid[0]
+
+
+def safe_discovery_summary(files: V3Files) -> dict[str, dict[str, Any]]:
+    """Return safe resolved roots and aggregate file counts without row content."""
+
+    def summarize(path: Path) -> dict[str, Any]:
+        return {
+            "resolved_path": str(path.resolve()),
+            "recursive_file_count": sum(1 for item in path.rglob("*") if item.is_file()),
         }
-        if len(signatures) != 1:
-            raise DiscoveryError("Conflicting authenticated model directories were found")
-    return min(valid, key=str)
+
+    return {
+        "competition": summarize(files.competition_root),
+        "public_data": summarize(files.public_roots[0]),
+        "authenticated_model": summarize(files.model_directory),
+    }
 
 
 def discover_v3_files(root: Path = Path("/kaggle/input")) -> V3Files:
-    """Discover the exact three coherent input roles and quarantine public CSVs."""
+    """Recursively discover three coherent input roles and quarantine public CSVs."""
     root = Path(root)
     public_roots, train, validation, aggregate = _discover_public(root)
     competition_root, sample = _discover_competition(root, public_roots)
     test = competition_root / TEST_FILENAME
     if any(_inside(test, public) for public in public_roots):
         raise DiscoveryError("Competition test resolved inside a quarantined public root")
-    files = V3Files(
+    return V3Files(
         public_train=train,
         public_validation=validation,
         public_aggregate=aggregate,
@@ -269,24 +296,6 @@ def discover_v3_files(root: Path = Path("/kaggle/input")) -> V3Files:
         public_roots=tuple(public_roots),
         competition_root=competition_root,
     )
-    def input_section(path: Path) -> Path:
-        relative = path.resolve().relative_to(root.resolve())
-        if not relative.parts:
-            raise DiscoveryError("A required file resolved directly under /kaggle/input")
-        return root / relative.parts[0]
-
-    required_sections = {
-        input_section(files.public_train),
-        input_section(files.official_train),
-        input_section(files.model_directory),
-    }
-    actual_sections = {path for path in root.iterdir() if path.is_dir()}
-    if len(required_sections) != 3 or actual_sections != required_sections:
-        raise DiscoveryError(
-            "Version 3 requires exactly three Kaggle input sections: competition data, "
-            "abidur14004/new-dataset, and the authenticated private BanglaBERT snapshot"
-        )
-    return files
 
 
 def authenticate_known_file(path: Path) -> str:

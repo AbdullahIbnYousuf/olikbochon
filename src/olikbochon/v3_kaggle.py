@@ -37,6 +37,7 @@ from .v3_data import (
     discover_v3_files,
     load_labeled_json,
     make_official_folds,
+    safe_discovery_summary,
 )
 from .v3_default_normalizer import verify_frozen_reference_corpus
 from .v3_selection import (
@@ -244,6 +245,7 @@ def run_kaggle_v3(input_root: Path = Path("/kaggle/input")) -> dict[str, Any]:
                 "environment": environment,
                 "normalizer_startup_verification": normalizer,
                 "authenticated_model": model_authentication,
+                "resolved_inputs": safe_discovery_summary(files),
             },
             indent=2,
             sort_keys=True,
