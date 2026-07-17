@@ -438,6 +438,10 @@ def train_reproduction_fold(
             validation_data,
             batch_size=config.batch_size,
         )
+        if not np.isfinite(evaluation.validation_loss) or not np.isfinite(
+            evaluation.probabilities
+        ).all():
+            raise RuntimeError("Reproduction validation produced a non-finite value")
         rank = (
             float(evaluation.metrics["macro_f1"]),
             -float(evaluation.validation_loss),
@@ -478,6 +482,9 @@ def train_reproduction_fold(
     )
     selected_predictions = predictions_from_label1(selected_evaluation.probabilities, 0.5)
     reloaded_predictions = predictions_from_label1(reloaded.probabilities, 0.5)
+    probabilities_match = bool(
+        np.array_equal(selected_evaluation.probabilities, reloaded.probabilities)
+    )
     predictions_match = bool(np.array_equal(selected_predictions, reloaded_predictions))
     metrics_match = selected_evaluation.metrics == reloaded.metrics
     loss_match = bool(
@@ -488,10 +495,11 @@ def train_reproduction_fold(
             atol=1e-12,
         )
     )
-    if not predictions_match or not metrics_match or not loss_match:
+    if not probabilities_match or not predictions_match or not metrics_match or not loss_match:
         raise RuntimeError(
             "Reproduction checkpoint reload mismatch: "
-            f"predictions={predictions_match}, metrics={metrics_match}, loss={loss_match}"
+            f"probabilities={probabilities_match}, predictions={predictions_match}, "
+            f"metrics={metrics_match}, loss={loss_match}"
         )
     checkpoint_size = sum(
         path.stat().st_size for path in checkpoint_directory.rglob("*") if path.is_file()
@@ -509,6 +517,7 @@ def train_reproduction_fold(
         max(training_peak, reload_peak),
         checkpoint_size,
         {
+            "probabilities_match": probabilities_match,
             "predictions_match": predictions_match,
             "metrics_match": metrics_match,
             "validation_loss_match": loss_match,

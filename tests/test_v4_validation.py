@@ -12,6 +12,7 @@ from olikbochon.v4_validation import (
     choose_candidate,
     fold_metric_record,
     make_repeated_grouped_folds,
+    route_threshold_diagnostics,
     select_threshold,
     summarize_fold_metrics,
 )
@@ -84,3 +85,19 @@ def test_candidate_selection_never_accepts_collapsed_leader() -> None:
     collapsed = CandidateEvaluation(CANDIDATE_ORDER[0], 0.99, 0.01, 0.99, 0.0, 0.95)
     healthy = CandidateEvaluation(CANDIDATE_ORDER[1], 0.70, 0.02, 0.72, 0.68, 0.60)
     assert choose_candidate([collapsed, healthy]) == healthy
+
+
+def test_route_thresholds_are_diagnostic_only_and_noncollapsed() -> None:
+    truth = [0, 0, 1, 1, 0, 0, 1, 1]
+    probabilities = [0.10, 0.40, 0.60, 0.90, 0.20, 0.42, 0.58, 0.80]
+    result = route_threshold_diagnostics(
+        truth,
+        probabilities,
+        [True, True, True, True, False, False, False, False],
+    )
+    assert result["role"] == "diagnostic_only_not_selected_or_deployed"
+    assert set(result["routes"]) == {"context_present", "context_absent"}
+    for route in result["routes"].values():
+        assert route["row_count"] == 4
+        assert route["threshold"] in THRESHOLD_GRID
+        assert route["metrics"]["maximum_predicted_class_share"] <= 0.90

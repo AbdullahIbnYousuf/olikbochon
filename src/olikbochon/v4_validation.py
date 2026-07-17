@@ -201,6 +201,59 @@ def select_threshold(
     return threshold, metrics
 
 
+def route_threshold_diagnostics(
+    truth: Sequence[int],
+    probabilities_label1: Sequence[float],
+    has_context: Sequence[bool],
+) -> dict[str, Any]:
+    """Report route-optimal frozen-grid thresholds for diagnosis only, never deployment."""
+    labels = np.asarray(truth, dtype=np.int64)
+    probabilities = np.asarray(probabilities_label1, dtype=np.float64)
+    presence = np.asarray(has_context, dtype=bool)
+    if not (labels.size == probabilities.size == presence.size):
+        raise ValueError("Route diagnostic inputs must be aligned")
+    result: dict[str, Any] = {
+        "role": "diagnostic_only_not_selected_or_deployed",
+        "routes": {},
+    }
+    for name, mask in (("context_present", presence), ("context_absent", ~presence)):
+        if not mask.any() or set(np.unique(labels[mask])) != {0, 1}:
+            raise ValueError(f"Route {name} must be nonempty and contain both labels")
+        ranked: list[tuple[tuple[float, float, float, float], float, dict[str, Any]]] = []
+        for threshold in THRESHOLD_GRID:
+            predictions = predictions_from_label1(probabilities[mask], threshold)
+            metrics = classification_metrics(labels[mask], predictions)
+            class_share = float(
+                np.bincount(predictions, minlength=2).max() / len(predictions)
+            )
+            rank = (
+                float(metrics["macro_f1"]),
+                float(metrics["f1_label0"]),
+                -abs(threshold - 0.5),
+                -threshold,
+            )
+            ranked.append(
+                (
+                    rank,
+                    threshold,
+                    {**metrics, "maximum_predicted_class_share": class_share},
+                )
+            )
+        _, threshold, metrics = max(ranked, key=lambda item: item[0])
+        predictions = predictions_from_label1(probabilities[mask], threshold)
+        counts = np.bincount(predictions, minlength=2)
+        result["routes"][name] = {
+            "row_count": int(mask.sum()),
+            "threshold": threshold,
+            "metrics": metrics,
+            "passes_class_collapse_guard": (
+                metrics["maximum_predicted_class_share"] <= 0.90
+            ),
+            "prediction_counts": {"0": int(counts[0]), "1": int(counts[1])},
+        }
+    return result
+
+
 def choose_candidate(evaluations: Sequence[CandidateEvaluation]) -> CandidateEvaluation:
     """Choose a non-collapsed candidate under the frozen comparison ordering."""
     by_name = {evaluation.name: evaluation for evaluation in evaluations}

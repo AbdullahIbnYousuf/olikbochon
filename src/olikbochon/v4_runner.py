@@ -50,6 +50,7 @@ from .v4_validation import (
     RepeatedGroupedFolds,
     build_repeated_official_folds,
     fold_metric_record,
+    route_threshold_diagnostics,
     select_threshold,
     summarize_fold_metrics,
 )
@@ -64,6 +65,8 @@ REPRODUCTION_OUTPUT_NAME = "v3_reproduction"
 HISTORICAL_CANDIDATE = "v3_historical_control"
 HISTORICAL_OUTPUT_NAME = "v3_historical_control"
 HISTORICAL_MAXIMUM_LENGTH = 512
+CORRECTED_CANDIDATE = "v4_schema_corrected_baseline"
+CORRECTED_OUTPUT_NAME = "schema_corrected_baseline"
 
 
 @dataclass(frozen=True)
@@ -177,13 +180,19 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mode",
         required=True,
-        choices=("smoke", "reproduce", "diagnose-reproduction", "historical-control"),
+        choices=(
+            "smoke",
+            "reproduce",
+            "diagnose-reproduction",
+            "historical-control",
+            "corrected-baseline",
+        ),
     )
     parser.add_argument("--model-path", required=True, type=Path)
     parser.add_argument(
         "--candidate",
         required=True,
-        choices=(SMOKE_CANDIDATE, HISTORICAL_CANDIDATE),
+        choices=(SMOKE_CANDIDATE, HISTORICAL_CANDIDATE, CORRECTED_CANDIDATE),
     )
     parser.add_argument("--seed", type=int)
     parser.add_argument("--seeds", nargs="+", type=int)
@@ -271,6 +280,107 @@ def validate_historical_control_arguments(
     if output_path != expected_output:
         raise ValueError("Historical control output must be artifacts/v4/v3_historical_control")
     return model_path, output_path
+
+
+def validate_corrected_baseline_arguments(
+    args: argparse.Namespace, root: Path
+) -> tuple[Path, Path]:
+    """Require the exact schema-corrected 15-fit comparison and new artifact family."""
+    if args.mode != "corrected-baseline":
+        raise ValueError("Corrected baseline validation requires --mode corrected-baseline")
+    if args.candidate != CORRECTED_CANDIDATE or args.max_length != SMOKE_MAXIMUM_LENGTH:
+        raise ValueError(
+            "Corrected baseline requires v4_schema_corrected_baseline at length 256"
+        )
+    if args.seed is not None or args.max_steps is not None:
+        raise ValueError("Corrected baseline does not accept --seed or --max-steps")
+    if tuple(args.seeds or ()) != VALIDATION_SEEDS:
+        raise ValueError("Corrected baseline requires --seeds 17 29 43 in that order")
+    if args.folds != FOLD_COUNT:
+        raise ValueError("Corrected baseline requires --folds 5")
+    model_path = require_approved_model_path(root, args.model_path)
+    output_path = require_smoke_output_path(root, args.output_dir)
+    expected_output = (artifact_root(root) / CORRECTED_OUTPUT_NAME).resolve()
+    if output_path != expected_output:
+        raise ValueError(
+            "Corrected baseline output must be artifacts/v4/schema_corrected_baseline"
+        )
+    return model_path, output_path
+
+
+def route_coverage_audit(
+    labels: Any,
+    context_flags: Any,
+    folds: RepeatedGroupedFolds,
+) -> dict[str, Any]:
+    """Validate aggregate schema routes and complete per-seed validation coverage."""
+    truth = np.asarray(labels, dtype=np.int64)
+    presence = np.asarray(context_flags, dtype=bool)
+    if truth.size == 0 or truth.size != presence.size:
+        raise RuntimeError("Corrected route labels and flags must be nonempty and aligned")
+    if set(np.unique(truth)) != {0, 1}:
+        raise RuntimeError("Corrected route audit requires both official labels")
+
+    def counts(mask: np.ndarray) -> dict[str, int]:
+        route_labels = np.bincount(truth[mask], minlength=2)
+        return {
+            "rows": int(mask.sum()),
+            "label_0": int(route_labels[0]),
+            "label_1": int(route_labels[1]),
+        }
+
+    route_counts = {
+        "context_present": counts(presence),
+        "context_absent": counts(~presence),
+    }
+    seed_coverage: dict[str, dict[str, Any]] = {}
+    for seed in folds.seeds:
+        assignments = np.zeros(truth.size, dtype=np.int64)
+        for fold in folds.folds:
+            if fold.seed == seed:
+                assignments[list(fold.validation_indices)] += 1
+        if not np.all(assignments == 1):
+            raise RuntimeError(f"Corrected route coverage is incomplete for seed {seed}")
+        seed_coverage[str(seed)] = {
+            "complete_oof_coverage": True,
+            **route_counts,
+        }
+    return {
+        "total_rows": int(truth.size),
+        **route_counts,
+        "per_seed_validation_coverage": seed_coverage,
+        "row_level_values_persisted": False,
+    }
+
+
+def retain_selected_checkpoint(mode: str, seed: int, fold: int) -> bool:
+    """Apply the compact retention policy only to its predeclared experiment modes."""
+    if mode not in {"historical-control", "corrected-baseline"}:
+        return True
+    return seed == VALIDATION_SEEDS[0] and fold == 1
+
+
+def split_distribution(labels: Any, context_flags: Any, indices: Any) -> dict[str, Any]:
+    """Return aggregate label and route counts for one train or validation split."""
+    truth = np.asarray(labels, dtype=np.int64)[indices]
+    presence = np.asarray(context_flags, dtype=bool)[indices]
+
+    def route(mask: np.ndarray) -> dict[str, int]:
+        counts = np.bincount(truth[mask], minlength=2)
+        return {
+            "rows": int(mask.sum()),
+            "label_0": int(counts[0]),
+            "label_1": int(counts[1]),
+        }
+
+    label_counts = np.bincount(truth, minlength=2)
+    return {
+        "rows": int(truth.size),
+        "label_0": int(label_counts[0]),
+        "label_1": int(label_counts[1]),
+        "context_present": route(presence),
+        "context_absent": route(~presence),
+    }
 
 
 def _git_commit(root: Path) -> str:
@@ -557,11 +667,13 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     import torch
 
     historical = args.mode == "historical-control"
-    model_path, output_path = (
-        validate_historical_control_arguments(args, root)
-        if historical
-        else validate_reproduction_arguments(args, root)
-    )
+    corrected = args.mode == "corrected-baseline"
+    if historical:
+        model_path, output_path = validate_historical_control_arguments(args, root)
+    elif corrected:
+        model_path, output_path = validate_corrected_baseline_arguments(args, root)
+    else:
+        model_path, output_path = validate_reproduction_arguments(args, root)
     if not torch.cuda.is_available():
         raise RuntimeError("V4 reproduction requires CUDA; CPU fallback is prohibited")
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -597,7 +709,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             tuple(range(len(frame))),
         )
         truncation_summary = prepared.truncation_summary
-        candidate_name = SMOKE_CANDIDATE
+        candidate_name = CORRECTED_CANDIDATE if corrected else SMOKE_CANDIDATE
     del preparation_model, tokenizer
     gc.collect()
     cleanup_cuda()
@@ -606,6 +718,12 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     truth = np.asarray(labels, dtype=np.int64)
     group_ids = np.asarray(folds.audit.group_ids, dtype=object)
     contexts = np.asarray(all_encoded.context_present, dtype=bool)
+    route_audit = None
+    if corrected:
+        independently_detected = np.asarray(context_presence(frame), dtype=bool)
+        if not np.array_equal(contexts, independently_detected):
+            raise RuntimeError("Corrected route flags differ between preparation and routing")
+        route_audit = route_coverage_audit(truth, contexts, folds)
     output_path.mkdir(parents=True)
     fold_metadata_root = output_path / "fold_metadata"
     fold_metadata_root.mkdir()
@@ -654,11 +772,26 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             seed=fold.seed,
             fold=fold.fold,
         )
+        prediction_counts = np.bincount(predictions, minlength=2)
         fold_record = {
             **metric_record,
+            "prediction_counts": {
+                "0": int(prediction_counts[0]),
+                "1": int(prediction_counts[1]),
+            },
             "validation_loss": result.evaluation.validation_loss,
             "train_rows": len(fold.train_indices),
             "validation_rows": len(fold.validation_indices),
+            "train_distribution": split_distribution(
+                truth,
+                contexts,
+                np.asarray(fold.train_indices, dtype=np.int64),
+            ),
+            "validation_distribution": split_distribution(
+                truth,
+                contexts,
+                validation_indices,
+            ),
             "train_groups": len(train_groups),
             "validation_groups": len(validation_groups),
             "group_overlap_count": 0,
@@ -673,8 +806,10 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             "checkpoint_size_bytes": result.checkpoint_size_bytes,
             "checkpoint_weight_sha256": sha256_file(checkpoint / "model.safetensors"),
             "checkpoint_role": f"seed_{fold.seed}/fold_{fold.fold}/checkpoint",
-            "checkpoint_retained": (
-                not historical or (fold.seed == VALIDATION_SEEDS[0] and fold.fold == 1)
+            "checkpoint_retained": retain_selected_checkpoint(
+                args.mode,
+                fold.seed,
+                fold.fold,
             ),
             "epoch_history": result.epoch_history,
             "reload": result.reload,
@@ -729,6 +864,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
                         "0": int(counts_at_050[0]),
                         "1": int(counts_at_050[1]),
                     },
+                    "context_metrics": subgroup_metrics(
+                        truth,
+                        predictions_at_050,
+                        contexts,
+                    ),
                 },
                 "selected_threshold": selected_threshold,
                 "selected_threshold_metrics": {
@@ -737,6 +877,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
                         "0": int(counts_at_selected[0]),
                         "1": int(counts_at_selected[1]),
                     },
+                    "context_metrics": subgroup_metrics(
+                        truth,
+                        predictions_at_selected,
+                        contexts,
+                    ),
                 },
             }
         )
@@ -767,6 +912,12 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "candidate_maximum_predicted_class_share_at_050": candidate_share,
         "candidate_accepted_at_050": candidate_share <= 0.90,
     }
+    if corrected:
+        threshold_report["route_threshold_diagnostics"] = route_threshold_diagnostics(
+            truth,
+            mean_probabilities,
+            contexts,
+        )
     reproduction_config = {
         "mode": args.mode,
         "candidate": candidate_name,
@@ -787,6 +938,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "early_stopping": "none",
         "checkpoint_selection": (
             "final_epoch_historical_v3_cv" if historical else config.checkpoint_policy
+        ),
+        "checkpoint_retention": (
+            "representative_seed_17_fold_1_only"
+            if historical or corrected
+            else "all_selected_fold_checkpoints"
         ),
         "threshold_grid": list(config.threshold_grid),
         "git_commit": _git_commit(root),
@@ -811,6 +967,8 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         },
     )
     _write_json(output_path / "truncation.json", truncation_summary)
+    if route_audit is not None:
+        _write_json(output_path / "route_audit.json", route_audit)
     _write_json(output_path / "runtime.json", runtime)
     _write_json(
         output_path / "log.json",
@@ -821,6 +979,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             "weight_sha256": model_loading["authentication"]["weight_sha256"],
             "competition_test_accessed": False,
             "public_data_used": False,
+            "row_level_probabilities_persisted": False,
         },
     )
     return {
