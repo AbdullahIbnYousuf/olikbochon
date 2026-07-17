@@ -2,13 +2,17 @@
 
 ## Current status
 
-The technical foundation is ready, but Version 3 training has not started.
+The complete self-contained Version 3 Kaggle implementation is ready for a
+fresh GPU run, but no Version 3 training has been executed yet.
 
 - The official BanglaBERT snapshot is pinned, authenticated, private on Kaggle,
   and verified for local-only loading.
 - The tokenizer, pretraining architecture, and downstream classification
   transition pass CPU-only synthetic smoke tests.
-- The official normalizer is pinned, minimally vendored, and parity-tested.
+- The official normalizer is the pinned behavioral reference. The Kaggle
+  runtime bundles a default-only stdlib implementation plus authenticated
+  `ftfy==6.0.3` and `wcwidth==0.8.2` source, with 79-case exact parity and a
+  frozen startup digest gate.
 - Deterministic field normalization, context presence, pair construction,
   faithful-logit resolution, vocabulary validation, and response fallback are
   implemented with synthetic unit tests.
@@ -37,11 +41,27 @@ Only `data/models/banglabert-official-9ce791f` locally and private Kaggle input
 No code may add tokenizer tokens, resize embeddings, use a remote model ID, or
 download at runtime.
 
-## Next authorized phase
+## Implemented experiment
 
-The next task may implement the previously approved two same-backbone training
-arms and offline Kaggle notebook. It must separately authorize training and must
-retain the existing data quarantine, duplicate controls, validation rules,
-runtime limits, offline flags, and private-weight handling. This task did not
-train, create checkpoints, run competition-test inference, or create a
-submission.
+- Stage A trains the public 4k split for two epochs and selects one checkpoint
+  on the public 1k split by macro F1 at 0.50, validation loss, then earlier
+  epoch.
+- Arm A performs five fresh official-only BanglaBERT folds.
+- Arm B reloads the frozen Stage A checkpoint independently for the same five
+  official folds.
+- Exact, prompt/context, and high-confidence near-duplicate families share a
+  deterministic group. Group-aware stratification is mandatory when any group
+  is nontrivial.
+- Arm B is promoted only under the locked macro-gain, class-collapse, and
+  class-0 guard. Threshold deployment has independent gain, range, and collapse
+  guards; otherwise 0.50 remains deployed.
+- Every trainable phase receives at most one CUDA OOM fallback, which discards
+  partial state and restarts from its original checkpoint with batch size 4 and
+  accumulation 4.
+
+The generated notebook embeds a deterministic, hash-verified runtime and needs
+exactly the competition input, `abidur14004/new-dataset`, and private model
+input `abdullahibnyousuf/banglabert-official-snapshot-9ce791f`. Real metrics,
+runtime, model size, and Kaggle score remain pending. This implementation task
+did not train, create a local checkpoint/submission, or open competition test
+rows.

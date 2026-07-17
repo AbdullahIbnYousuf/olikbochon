@@ -71,3 +71,26 @@ the same environment. Twelve synthetic inputs covered:
 
 All 12 vendored results exactly equaled upstream. A separate assertion confirmed
 full-width `Ａ` normalizes to `A`, demonstrating the default NFKC behavior.
+
+## Self-contained Kaggle default runtime
+
+The unchanged pinned official package remains the behavioral reference, but it
+is not imported in Kaggle because its constants module unconditionally imports
+compiled `regex` and the obsolete `emoji` API. Version 3 therefore supports
+only the exact audited default call: NFKC, no punctuation/URL/emoji replacement,
+and Unicode normalization last. Any other argument raises a clear error.
+
+The runtime retains only default-reachable official constants and stdlib-`re`
+patterns. It bundles `ftfy==6.0.3` and `wcwidth==0.8.2` source plus their MIT
+license texts; CLI entry points, docs, tests, bytecode, caches, `regex`, and
+`emoji` are excluded. Exact source hashes are recorded in
+`src/olikbochon/v3_vendor_notices/VENDOR_MANIFEST.json`.
+
+Local direct parity now covers 79 deterministic cases: Bengali, compatibility
+and canonical forms, quote/whitespace/official replacements, mojibake, mixed
+language, unchanged URLs/punctuation/emoji, empty and long strings, and fixed-
+seed randomized Unicode. The reference and bundled aggregate output digest is
+`49020fd6767f4dc5d5d5a9d60d982753f272a23b777f55f7432338122f91cd58`.
+Kaggle startup regenerates those safe synthetic inputs and checks that frozen
+digest before loading real data. It does not claim live-reference parity or
+support for the excluded optional replacement arguments.

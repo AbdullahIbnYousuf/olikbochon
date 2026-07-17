@@ -1,6 +1,6 @@
 # অলীকবচন — Local Competition Workspace
 
-Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 remains the current best offline TF-IDF baseline at **0.466** on the public leaderboard. Version 2 completed the full Kaggle pipeline successfully using 5,299 unique labeled rows and threshold 0.50, but scored **0.426**, or 0.040 lower than Version 1. This useful negative experiment supports a public-to-competition domain mismatch: more labeled data did not improve leaderboard performance, so Version 2 is not the current final-submission choice and repeated TF-IDF threshold probing is not recommended. Version 3's authenticated BanglaBERT snapshot now passes offline tokenizer/model loading, and its pinned official normalizer and deterministic preprocessing are ready; no Version 3 training or test inference has started.
+Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 remains the current best offline TF-IDF baseline at **0.466** on the public leaderboard. Version 2 completed the full Kaggle pipeline successfully using 5,299 unique labeled rows and threshold 0.50, but scored **0.426**, or 0.040 lower than Version 1. Version 3 is now implemented as a self-contained authenticated BanglaBERT GPU notebook with two grouped-CV arms, guarded arm/threshold selection, and full-phase CUDA OOM restarts. It has not been trained or scored yet; real Version 3 results remain pending a fresh internet-disabled Kaggle run.
 
 ## Directory layout
 
@@ -48,4 +48,4 @@ Private competition access cannot be automated: the participant must open the in
 
 ## Scope
 
-Repository tooling may validate file existence, filenames, sizes, hashes, notebook structure, and CSV headers. It must never inspect or display raw test rows or invoke an external inference API. Version 1 used only the official 299-row labeled sample. The provided 5,000-row labeled dataset is approved for Version 2, but every copy of the competition test file must remain excluded from training.
+Repository tooling may validate file existence, filenames, sizes, hashes, notebook structure, and CSV headers. It must never inspect or display raw test rows or invoke an external inference API. Version 1 used only the official labeled sample. The provided 5,000-row labeled dataset is approved for Versions 2 and 3, but every copy of the competition test file must remain excluded from training, validation, grouping, and model selection.

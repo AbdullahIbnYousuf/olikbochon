@@ -133,3 +133,31 @@ Promote a candidate only when gains appear across folds/seeds and both context r
 - Preserve holdout rows and remove only lower-precedence public rows when a small passing set of same-label near duplicates exists.
 - After evaluation, refit on every unique allowed row. Do not retune the threshold even though adding validation/official rows may shift calibration.
 - Quarantine all CSVs below directories containing the public 4k/1k files. Resolve test inference only from a separate root co-locating the official sample, test, and sample submission.
+
+## Version 3 grouped transformer contract
+
+- Authenticate the known public and official labeled hashes and report row
+  counts dynamically. The public aggregate is excluded whenever the separate
+  4k/1k roles are used.
+- Build official groups from exact normalized text, normalized prompt/context
+  fingerprints, and the predeclared character-TF-IDF near-duplicate rule at
+  cosine 0.97 plus length ratio 0.90. Related rows must remain in one fold.
+- Use five deterministic `StratifiedGroupKFold` folds when any group is
+  nontrivial. Plain `StratifiedKFold` is permitted only after the audit proves
+  every group is a singleton. Validate complete one-time OOF placement, both
+  classes in every validation fold, and zero train/validation group overlap.
+- Use the identical frozen fold assignment for Arm A and Arm B. Arm A starts
+  every fold from the authenticated base; Arm B starts every fold from the same
+  public-selected Stage A checkpoint. No fold inherits another fold's state.
+- Compare arms only at threshold 0.50. Promote Arm B only for macro gain at
+  least 0.01, no predicted class above 90%, and class-0 F1 no more than 0.02
+  below Arm A. Arm A wins every tie or failed guard.
+- Tune the selected arm on 0.20–0.80 by 0.01 using macro F1, class-0 F1,
+  closeness to 0.50, then lower threshold. Deploy it only for at least 0.01
+  macro gain, range 0.40–0.60, and no class collapse; otherwise deploy 0.50.
+- Label arm comparison `Official OOF model-selection estimate` and threshold
+  scoring `Official OOF threshold-tuning estimate`. Both are optimistic, not
+  independent performance estimates.
+- Freeze the arm, threshold, configuration, and folds before final fitting or
+  competition-test inference. A CUDA OOM may only trigger one complete phase
+  restart under the locked smaller-batch configuration.

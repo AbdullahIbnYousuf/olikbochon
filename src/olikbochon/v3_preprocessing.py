@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .bangla_normalizer import normalize as official_normalize
+from .v3_default_normalizer import normalize_default
 
 
 PROMPT_MARKER = "[PROMPT]"
@@ -84,7 +84,7 @@ def build_transformer_pair(
     context: Any,
     response: Any,
     *,
-    normalizer: Callable[[str], str] = official_normalize,
+    normalizer: Callable[[str], str] = normalize_default,
 ) -> PreparedPair:
     """Normalize raw fields separately, then insert ordinary literal markers."""
     present = int(raw_context_is_present(context))

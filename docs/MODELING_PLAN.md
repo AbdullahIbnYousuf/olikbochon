@@ -88,7 +88,12 @@ Do not attempt all three immediately. Fine-tune one after Phase A is stable, the
 
 All three are far below the 50 GB limit individually. Do not package unused framework variants or optimizer states in the inference dataset. Prefer safe tensor weights when the upstream model provides them.
 
-Version 3 selects BanglaBERT now that its private snapshot, offline loading, and official normalizer packaging are verified. XLM-R base remains the simplest licensed fallback; MuRIL remains a later multilingual/transliteration alternative if validation justifies another backbone.
+Version 3 selects BanglaBERT now that its private snapshot, offline loading,
+default-only normalizer runtime, grouped-CV experiment, and self-contained
+notebook are implemented. Real training and scoring remain pending on Kaggle.
+XLM-R base remains the simplest fallback; MuRIL remains a later multilingual or
+transliteration alternative only if the frozen Version 3 evidence justifies a
+new experiment.
 
 ## Phase C — Context-aware improvements
 

@@ -249,15 +249,12 @@ def subgroup_metrics(
     result: dict[str, dict[str, Any]] = {}
     for name, mask in (("context_present", presence), ("context_absent", ~presence)):
         labels = np.unique(truth[mask])
-        row: dict[str, Any] = {"count": int(mask.sum()), "both_classes": len(labels) == 2}
-        if len(labels) == 2:
-            metrics = classification_metrics(truth[mask], predicted[mask])
-            row.update(
-                {
-                    "f1_label0": metrics["f1_label0"],
-                    "macro_f1": metrics["macro_f1"],
-                    "confusion_matrix": metrics["confusion_matrix"],
-                }
-            )
+        row: dict[str, Any] = {
+            "count": int(mask.sum()),
+            "both_classes": len(labels) == 2,
+            "zero_division_policy": 0,
+        }
+        if mask.any():
+            row.update(classification_metrics(truth[mask], predicted[mask]))
         result[name] = row
     return result
