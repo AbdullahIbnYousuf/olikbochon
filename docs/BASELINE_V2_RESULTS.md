@@ -23,8 +23,14 @@ This was a technically successful run: labeled-data discovery, safety audits, fi
 
 | Version | Public score | Difference from Version 1 | Current selection status |
 |---|---:|---:|---|
-| Version 1 | **0.466** | — | Current best TF-IDF submission |
+| Version 1 | 0.466 | — | Previous best; current best TF-IDF submission |
 | Version 2 | 0.426 | -0.040 | Do not currently select as the final scored submission |
+| Version 3 | **0.525** | **+0.059** | **Current best scored baseline** |
+
+Version 3 subsequently selected official-only BanglaBERT Arm A, rejected its
+public-5K-adapted Arm B, and improved over Version 1 by 0.059. It is now the
+current best scored baseline, though it is not presented as a final winning
+system.
 
 Adding the approved public labeled data did not improve leaderboard performance. Together with the weaker independent official-sample result below, the public score supports the previously observed public-to-competition domain mismatch. One score cannot isolate every cause, but it provides no reason to prefer Version 2 over Version 1 or to probe more TF-IDF thresholds on the public leaderboard.
 
@@ -85,7 +91,11 @@ The threshold remains fixed at 0.50 after selection. The final Kaggle model is r
 
 ## Recommendation
 
-Keep Version 1 as the current best scored baseline and do not select Version 2 as the final scored submission. Repeated threshold probing within the same TF-IDF family is not recommended. A future Version 3 should investigate a stronger context-aware or multilingual transformer model under the existing offline, licensing, leakage, runtime, and artifact-size constraints.
+Keep Version 2 as a documented negative experiment and do not select it as the
+final scored submission. Version 3 is now the current best scored baseline at
+0.525, but remains a baseline rather than a final winning system. Repeated
+threshold probing within the TF-IDF family or post-hoc Version 3 leaderboard
+tuning is not recommended.
 
 ## Safety confirmations
 

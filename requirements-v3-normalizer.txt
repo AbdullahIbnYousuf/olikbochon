@@ -1,0 +1,7 @@
+# Local reference-parity environment for csebuetnlp/normalizer at pinned commit
+# d405944dde5ceeacb7c2fd3245ae2a9dea5f35c9. The Kaggle runtime installs
+# nothing: it embeds the default-only path plus vendored ftfy/wcwidth source.
+emoji==1.4.2
+ftfy==6.0.3
+regex==2026.7.10
+wcwidth==0.8.2
