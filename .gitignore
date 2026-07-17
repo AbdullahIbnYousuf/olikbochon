@@ -1,6 +1,7 @@
 .venv/
 data/
 outputs/
+artifacts/v4/
 .ipynb_checkpoints/
 __pycache__/
 *.py[cod]
