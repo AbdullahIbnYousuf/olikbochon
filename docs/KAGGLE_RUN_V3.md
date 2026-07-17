@@ -1,5 +1,23 @@
 # Run BanglaBERT Version 3 on Kaggle
 
+## Confirmed Version 3 run
+
+The generated Version 3 notebook completed successfully on Kaggle in **6
+minutes 9 seconds**. The frozen selection logic chose **Arm A, official-only
+BanglaBERT**, rejecting the public-5K-adapted Arm B. The deployed threshold was
+**0.54**.
+
+Kaggle accepted `submission.csv` and returned a public leaderboard score of
+**0.525**, making Version 3 the current best scored project baseline. This is
+**0.059 above** Version 1's 0.466. The aggregate test prediction distribution
+was 1,357 label `0` and 1,159 label `1`; no row-level predictions or IDs are
+recorded. No fixed-0.50 submission was made.
+
+This confirms the complete offline transformer pipeline works on Kaggle. It
+does not establish that Version 3 is a final winning system, and the public
+score must not be used to revise the frozen arm, threshold, training, or
+preprocessing decisions.
+
 ## Create the notebook
 
 1. Import `notebooks/generated/banglabert_v3.ipynb` into Kaggle.
@@ -7,7 +25,9 @@
 3. Attach `abidur14004/new-dataset`.
 4. Attach the private dataset
    `abdullahibnyousuf/banglabert-official-snapshot-9ce791f`, version 1.
-5. Confirm exactly those three input sections appear.
+5. Confirm those three required resources are attached. Kaggle may mount them
+   beneath nested competition/dataset directories; the notebook resolves each
+   role recursively and rejects missing or ambiguous roots.
 6. Select a T4 GPU and keep Internet **Off**.
 
 Do not add install, download, API, exploratory display, or alternate-model
@@ -42,7 +62,8 @@ Confirm the printed schema, row-count, ID-sequence, and label-domain validation
 messages. Save a committed notebook version, wait for that fresh internet-off
 run to finish, and keep the model output private.
 
-Submit only `submission.csv`. Record the Kaggle runtime, selected arm,
-threshold, model size, OOM status, and public score in
-`docs/BANGLABERT_V3_RESULTS.md`. Do not submit the fixed reference as a
-leaderboard probe and do not change any decision using the public score.
+The recorded run submitted only `submission.csv` at threshold 0.54; the
+fixed-0.50 reference was not submitted. For any reproducibility rerun, record
+the runtime, selected arm, threshold, model size, OOM status, and public score
+without committing outputs. Do not submit the fixed reference as a leaderboard
+probe and do not change any decision using the public score.

@@ -1,6 +1,6 @@
 # অলীকবচন — Local Competition Workspace
 
-Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 1 remains the current best offline TF-IDF baseline at **0.466** on the public leaderboard. Version 2 completed the full Kaggle pipeline successfully using 5,299 unique labeled rows and threshold 0.50, but scored **0.426**, or 0.040 lower than Version 1. Version 3 is now implemented as a self-contained authenticated BanglaBERT GPU notebook with two grouped-CV arms, guarded arm/threshold selection, and full-phase CUDA OOM restarts. It has not been trained or scored yet; real Version 3 results remain pending a fresh internet-disabled Kaggle run.
+Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 3 is the current best scored baseline at **0.525** on the public leaderboard, improving by **0.059** over Version 1's **0.466** TF-IDF result. Its self-contained authenticated BanglaBERT GPU notebook completed in **6 minutes 9 seconds**, selected **Arm A (official-only BanglaBERT)**, rejected the public-5K-adapted Arm B, and deployed threshold **0.54**. Version 2 remains a useful negative TF-IDF experiment at **0.426**. No fixed-0.50 Version 3 submission was made. Version 3 is still a baseline, not the final winning system.
 
 ## Directory layout
 
