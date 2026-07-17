@@ -347,6 +347,7 @@ def train_reproduction_fold(
     *,
     seed: int,
     config: V4TrainingConfig = V4TrainingConfig(),
+    checkpoint_selection: str = "best_validation",
 ) -> ReproductionFoldResult:
     """Train one frozen V4 fold from the authenticated base and verify its checkpoint."""
     import torch
@@ -357,6 +358,8 @@ def train_reproduction_fold(
         raise RuntimeError("V4 reproduction requires CUDA; CPU fallback is prohibited")
     if checkpoint_directory.exists():
         raise ValueError("Reproduction checkpoint directory must not already exist")
+    if checkpoint_selection not in {"best_validation", "final_epoch"}:
+        raise ValueError("Unknown fold checkpoint selection policy")
     started = perf_counter()
     tokenizer, model, _loading = load_offline_base(model_path)
     set_all_seeds(seed)
@@ -440,7 +443,12 @@ def train_reproduction_fold(
             -float(evaluation.validation_loss),
             -epoch,
         )
-        if best_rank is None or rank > best_rank:
+        use_epoch = (
+            epoch == config.epochs
+            if checkpoint_selection == "final_epoch"
+            else best_rank is None or rank > best_rank
+        )
+        if use_epoch:
             best_rank = rank
             selected_epoch = epoch
             selected_evaluation = evaluation

@@ -6,6 +6,7 @@ import argparse
 import gc
 import json
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,12 +16,16 @@ from typing import Any
 
 import numpy as np
 
-from .data_loading import OFFICIAL_SAMPLE_SHA256, load_labeled_json
+from .data_loading import OFFICIAL_SAMPLE_SHA256, load_labeled_json, sha256_file
 from .metrics import classification_metrics, predictions_from_label1, subgroup_metrics
 from .v3_preprocessing import raw_context_is_present
+from .v3_training import encode_frame as encode_v3_frame
+from .v3_training import subset_encoded
+from .v4_diagnostics import probability_diagnostics, selected_epoch_distribution
 from .v4_preprocessing import (
     V3_COMPATIBLE,
     EncodedV4Input,
+    FieldBudget,
     encode_comparison_baseline,
     encode_field_aware,
     prepare_v4_input,
@@ -34,6 +39,7 @@ from .v4_training import (
     encoded_frame,
     evaluate_offline_smoke_checkpoint,
     load_offline_base,
+    load_offline_checkpoint,
     require_local_model_path,
     train_reproduction_fold,
     train_smoke_model,
@@ -55,6 +61,9 @@ SMOKE_MAXIMUM_LENGTH = 256
 SMOKE_BATCH_SIZE = 4
 SMOKE_GRADIENT_ACCUMULATION = 2
 REPRODUCTION_OUTPUT_NAME = "v3_reproduction"
+HISTORICAL_CANDIDATE = "v3_historical_control"
+HISTORICAL_OUTPUT_NAME = "v3_historical_control"
+HISTORICAL_MAXIMUM_LENGTH = 512
 
 
 @dataclass(frozen=True)
@@ -64,6 +73,16 @@ class PreparedExperiment:
     encodings: tuple[EncodedV4Input, ...]
     folds: RepeatedGroupedFolds
     truncation_summary: dict[str, Any]
+
+
+def historical_control_config() -> V4TrainingConfig:
+    """Return the exact predeclared historical schedule/length control."""
+    return V4TrainingConfig(
+        maximum_length=HISTORICAL_MAXIMUM_LENGTH,
+        field_budget=FieldBudget(maximum_length=HISTORICAL_MAXIMUM_LENGTH),
+        epochs=4,
+        learning_rate=1e-5,
+    )
 
 
 def official_training_path(repository_root: Path) -> Path:
@@ -155,14 +174,22 @@ def build_cli_parser() -> argparse.ArgumentParser:
         prog="python -m olikbochon.v4_runner",
         description="Run a bounded official-only V4 CUDA workflow.",
     )
-    parser.add_argument("--mode", required=True, choices=("smoke", "reproduce"))
+    parser.add_argument(
+        "--mode",
+        required=True,
+        choices=("smoke", "reproduce", "diagnose-reproduction", "historical-control"),
+    )
     parser.add_argument("--model-path", required=True, type=Path)
-    parser.add_argument("--candidate", required=True, choices=(SMOKE_CANDIDATE,))
+    parser.add_argument(
+        "--candidate",
+        required=True,
+        choices=(SMOKE_CANDIDATE, HISTORICAL_CANDIDATE),
+    )
     parser.add_argument("--seed", type=int)
     parser.add_argument("--seeds", nargs="+", type=int)
     parser.add_argument("--folds", type=int)
     parser.add_argument("--max-steps", type=int)
-    parser.add_argument("--max-length", required=True, type=int, choices=(SMOKE_MAXIMUM_LENGTH,))
+    parser.add_argument("--max-length", required=True, type=int)
     parser.add_argument("--output-dir", required=True, type=Path)
     return parser
 
@@ -171,6 +198,8 @@ def validate_smoke_arguments(args: argparse.Namespace, root: Path) -> tuple[Path
     """Validate local-only inputs and hard smoke bounds before any data or CUDA work."""
     if args.mode != "smoke" or args.seed != SMOKE_SEED:
         raise ValueError("Smoke mode requires --seed 17")
+    if args.candidate != SMOKE_CANDIDATE or args.max_length != SMOKE_MAXIMUM_LENGTH:
+        raise ValueError("Smoke mode requires the V3-compatible candidate at length 256")
     if args.seeds is not None or args.folds is not None:
         raise ValueError("Smoke mode does not accept --seeds or --folds")
     if args.max_steps is None:
@@ -188,6 +217,8 @@ def validate_reproduction_arguments(
     """Require the exact predeclared 15-fit V3-compatible reproduction."""
     if args.mode != "reproduce":
         raise ValueError("Reproduction validation requires --mode reproduce")
+    if args.candidate != SMOKE_CANDIDATE or args.max_length != SMOKE_MAXIMUM_LENGTH:
+        raise ValueError("Reproduce mode requires the V3-compatible candidate at length 256")
     if args.seed is not None or args.max_steps is not None:
         raise ValueError("Reproduce mode does not accept --seed or --max-steps")
     if tuple(args.seeds or ()) != VALIDATION_SEEDS:
@@ -199,6 +230,46 @@ def validate_reproduction_arguments(
     expected_output = (artifact_root(root) / REPRODUCTION_OUTPUT_NAME).resolve()
     if output_path != expected_output:
         raise ValueError("Reproduce output directory must be artifacts/v4/v3_reproduction")
+    return model_path, output_path
+
+
+def validate_diagnostic_arguments(
+    args: argparse.Namespace, root: Path
+) -> tuple[Path, Path]:
+    """Require the completed reproduction and its exact aggregate-only diagnostic scope."""
+    if args.mode != "diagnose-reproduction":
+        raise ValueError("Diagnostic validation requires --mode diagnose-reproduction")
+    if args.candidate != SMOKE_CANDIDATE or args.max_length != SMOKE_MAXIMUM_LENGTH:
+        raise ValueError("Diagnostics require the completed length-256 V3-compatible run")
+    if args.seed is not None or args.max_steps is not None:
+        raise ValueError("Diagnostic mode does not accept --seed or --max-steps")
+    if tuple(args.seeds or ()) != VALIDATION_SEEDS or args.folds != FOLD_COUNT:
+        raise ValueError("Diagnostics require --seeds 17 29 43 and --folds 5")
+    model_path = require_approved_model_path(root, args.model_path)
+    output_path = Path(args.output_dir).resolve()
+    expected_output = (artifact_root(root) / REPRODUCTION_OUTPUT_NAME).resolve()
+    if output_path != expected_output or not output_path.is_dir():
+        raise ValueError("Diagnostics require the existing artifacts/v4/v3_reproduction")
+    return model_path, output_path
+
+
+def validate_historical_control_arguments(
+    args: argparse.Namespace, root: Path
+) -> tuple[Path, Path]:
+    """Require one predeclared historical-schedule control with current grouped seeds."""
+    if args.mode != "historical-control":
+        raise ValueError("Historical control validation requires --mode historical-control")
+    if args.candidate != HISTORICAL_CANDIDATE or args.max_length != HISTORICAL_MAXIMUM_LENGTH:
+        raise ValueError("Historical control requires v3_historical_control at length 512")
+    if args.seed is not None or args.max_steps is not None:
+        raise ValueError("Historical control does not accept --seed or --max-steps")
+    if tuple(args.seeds or ()) != VALIDATION_SEEDS or args.folds != FOLD_COUNT:
+        raise ValueError("Historical control requires --seeds 17 29 43 and --folds 5")
+    model_path = require_approved_model_path(root, args.model_path)
+    output_path = require_smoke_output_path(root, args.output_dir)
+    expected_output = (artifact_root(root) / HISTORICAL_OUTPUT_NAME).resolve()
+    if output_path != expected_output:
+        raise ValueError("Historical control output must be artifacts/v4/v3_historical_control")
     return model_path, output_path
 
 
@@ -214,6 +285,10 @@ def _git_commit(root: Path) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def run_smoke(args: argparse.Namespace, root: Path) -> dict[str, Any]:
@@ -359,11 +434,134 @@ def run_smoke(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     }
 
 
-def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
-    """Run only the frozen 15-fit V3-compatible V4 reproduction."""
+def run_reproduction_diagnostics(args: argparse.Namespace, root: Path) -> dict[str, Any]:
+    """Recompute only aggregate calibration facts from the 15 selected checkpoints."""
     import torch
 
-    model_path, output_path = validate_reproduction_arguments(args, root)
+    _model_path, output_path = validate_diagnostic_arguments(args, root)
+    if not torch.cuda.is_available():
+        raise RuntimeError("Checkpoint diagnostics require CUDA; CPU fallback is prohibited")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    saved_records = _read_json(output_path / "fold_metrics.json")["folds"]
+    if len(saved_records) != len(VALIDATION_SEEDS) * FOLD_COUNT:
+        raise RuntimeError("Completed reproduction does not contain exactly 15 fold records")
+    by_fold = {(int(row["seed"]), int(row["fold"])): row for row in saved_records}
+    first_checkpoint = output_path / "seed_17" / "fold_1" / "checkpoint"
+    tokenizer, preparation_model, _loading = load_offline_checkpoint(first_checkpoint)
+    frame = load_official_training_frame(root)
+    config = V4TrainingConfig(maximum_length=SMOKE_MAXIMUM_LENGTH)
+    prepared = prepare_experiment(
+        frame,
+        tokenizer,
+        serialization=V3_COMPATIBLE,
+        field_aware=False,
+        config=config,
+    )
+    del preparation_model, tokenizer
+    gc.collect()
+    cleanup_cuda()
+    labels = tuple(int(value) for value in frame["label"])
+    truth = np.asarray(labels, dtype=np.int64)
+    diagnostics: list[dict[str, Any]] = []
+    for fold in prepared.folds.folds:
+        saved = by_fold[(fold.seed, fold.fold)]
+        validation_data = encoded_frame(
+            prepared.encodings,
+            labels,
+            fold.validation_indices,
+        )
+        checkpoint = (
+            output_path / f"seed_{fold.seed}" / f"fold_{fold.fold}" / "checkpoint"
+        )
+        evaluation, loading, _peak = evaluate_offline_smoke_checkpoint(
+            checkpoint,
+            validation_data,
+            batch_size=config.batch_size,
+        )
+        saved_metrics = {
+            key: saved[key]
+            for key in ("macro_f1", "f1_label0", "f1_label1", "accuracy", "confusion_matrix")
+        }
+        loss_match = bool(
+            np.isclose(
+                evaluation.validation_loss,
+                float(saved["validation_loss"]),
+                rtol=0,
+                atol=1e-12,
+            )
+        )
+        if evaluation.metrics != saved_metrics or not loss_match:
+            raise RuntimeError(
+                f"Diagnostic checkpoint mismatch for seed {fold.seed}, fold {fold.fold}"
+            )
+        validation_indices = np.asarray(fold.validation_indices, dtype=np.int64)
+        row = probability_diagnostics(
+            truth[validation_indices],
+            evaluation.probabilities,
+        )
+        row.update(
+            {
+                "seed": fold.seed,
+                "fold": fold.fold,
+                "selected_epoch": int(saved["selected_epoch"]),
+                "validation_loss": evaluation.validation_loss,
+                "epoch_history": saved["epoch_history"],
+                "checkpoint_metrics_match": True,
+                "checkpoint_validation_loss_match": True,
+                "loading_missing_keys": len(loading.get("missing_keys", [])),
+                "loading_unexpected_keys": len(loading.get("unexpected_keys", [])),
+            }
+        )
+        diagnostics.append(row)
+    best_thresholds = [float(row["best_frozen_grid"]["threshold"]) for row in diagnostics]
+    brier_scores = np.asarray([float(row["brier_score"]) for row in diagnostics])
+    near_optimal_count = sum(bool(row["threshold_054_near_optimal"]) for row in diagnostics)
+    report = {
+        "scope": "aggregate-only offline recomputation from selected fold checkpoints",
+        "fold_count": len(diagnostics),
+        "selected_epoch_distribution": selected_epoch_distribution(saved_records),
+        "best_threshold_distribution": {
+            f"{threshold:.2f}": best_thresholds.count(threshold)
+            for threshold in sorted(set(best_thresholds))
+        },
+        "threshold_054_near_optimal_definition": (
+            "best-grid threshold within 0.02 and macro-F1 gap from best no greater than 0.02"
+        ),
+        "threshold_054_near_optimal_count": near_optimal_count,
+        "threshold_054_near_optimal_fraction": near_optimal_count / len(diagnostics),
+        "brier_score_summary": {
+            "mean": float(brier_scores.mean()),
+            "std": float(brier_scores.std(ddof=0)),
+            "minimum": float(brier_scores.min()),
+            "maximum": float(brier_scores.max()),
+        },
+        "folds": diagnostics,
+        "row_level_probabilities_persisted": False,
+        "training_performed": False,
+    }
+    _write_json(output_path / "calibration_diagnostics.json", report)
+    return {
+        "status": "passed",
+        "fold_count": len(diagnostics),
+        "selected_epoch_distribution": report["selected_epoch_distribution"],
+        "best_threshold_distribution": report["best_threshold_distribution"],
+        "threshold_054_near_optimal_count": near_optimal_count,
+        "brier_score_summary": report["brier_score_summary"],
+    }
+
+
+def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
+    """Run one exact predeclared repeated grouped control family."""
+    import torch
+
+    historical = args.mode == "historical-control"
+    model_path, output_path = (
+        validate_historical_control_arguments(args, root)
+        if historical
+        else validate_reproduction_arguments(args, root)
+    )
     if not torch.cuda.is_available():
         raise RuntimeError("V4 reproduction requires CUDA; CPU fallback is prohibited")
     os.environ["HF_HUB_OFFLINE"] = "1"
@@ -372,22 +570,41 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     started = perf_counter()
     tokenizer, preparation_model, model_loading = load_offline_base(model_path)
     frame = load_official_training_frame(root)
-    config = V4TrainingConfig(maximum_length=args.max_length)
-    prepared = prepare_experiment(
-        frame,
-        tokenizer,
-        serialization=V3_COMPATIBLE,
-        field_aware=False,
-        config=config,
-    )
-    del preparation_model
+    labels = tuple(int(value) for value in frame["label"])
+    if historical:
+        config = historical_control_config()
+        folds = build_repeated_official_folds(frame)
+        all_encoded = encode_v3_frame(frame, tokenizer, with_labels=True)
+        truncation_summary = {
+            "rows": len(frame),
+            "historical_v3_response_fallback_count": all_encoded.response_fallback_count,
+            "maximum_length": HISTORICAL_MAXIMUM_LENGTH,
+        }
+        candidate_name = HISTORICAL_CANDIDATE
+    else:
+        config = V4TrainingConfig(maximum_length=args.max_length)
+        prepared = prepare_experiment(
+            frame,
+            tokenizer,
+            serialization=V3_COMPATIBLE,
+            field_aware=False,
+            config=config,
+        )
+        folds = prepared.folds
+        all_encoded = encoded_frame(
+            prepared.encodings,
+            labels,
+            tuple(range(len(frame))),
+        )
+        truncation_summary = prepared.truncation_summary
+        candidate_name = SMOKE_CANDIDATE
+    del preparation_model, tokenizer
     gc.collect()
     cleanup_cuda()
-    if prepared.folds.seeds != VALIDATION_SEEDS or len(prepared.folds.folds) != 15:
+    if folds.seeds != VALIDATION_SEEDS or len(folds.folds) != 15:
         raise RuntimeError("Frozen repeated grouped folds were not reproduced exactly")
-    labels = tuple(int(value) for value in frame["label"])
     truth = np.asarray(labels, dtype=np.int64)
-    group_ids = np.asarray(prepared.folds.audit.group_ids, dtype=object)
+    group_ids = np.asarray(folds.audit.group_ids, dtype=object)
     contexts = np.asarray(context_presence(frame), dtype=bool)
     output_path.mkdir(parents=True)
     fold_metadata_root = output_path / "fold_metadata"
@@ -397,8 +614,9 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     }
     fold_records: list[dict[str, Any]] = []
     checkpoint_total_bytes = 0
+    retained_checkpoint_bytes = 0
     maximum_peak = 0
-    for fold in prepared.folds.folds:
+    for fold in folds.folds:
         train_groups = set(group_ids[list(fold.train_indices)])
         validation_groups = set(group_ids[list(fold.validation_indices)])
         overlap = train_groups & validation_groups
@@ -406,11 +624,10 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             raise RuntimeError(
                 f"Group leakage detected for seed {fold.seed}, fold {fold.fold}"
             )
-        train_data = encoded_frame(prepared.encodings, labels, fold.train_indices)
-        validation_data = encoded_frame(
-            prepared.encodings,
-            labels,
-            fold.validation_indices,
+        train_data = subset_encoded(all_encoded, np.asarray(fold.train_indices, dtype=np.int64))
+        validation_data = subset_encoded(
+            all_encoded,
+            np.asarray(fold.validation_indices, dtype=np.int64),
         )
         checkpoint = (
             output_path / f"seed_{fold.seed}" / f"fold_{fold.fold}" / "checkpoint"
@@ -422,6 +639,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             checkpoint,
             seed=fold.seed,
             config=config,
+            checkpoint_selection="final_epoch" if historical else "best_validation",
         )
         target = oof_by_seed[fold.seed]
         validation_indices = np.asarray(fold.validation_indices, dtype=np.int64)
@@ -453,7 +671,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             "runtime_seconds": result.runtime_seconds,
             "peak_gpu_vram_bytes": result.peak_gpu_vram_bytes,
             "checkpoint_size_bytes": result.checkpoint_size_bytes,
+            "checkpoint_weight_sha256": sha256_file(checkpoint / "model.safetensors"),
             "checkpoint_role": f"seed_{fold.seed}/fold_{fold.fold}/checkpoint",
+            "checkpoint_retained": (
+                not historical or (fold.seed == VALIDATION_SEEDS[0] and fold.fold == 1)
+            ),
             "epoch_history": result.epoch_history,
             "reload": result.reload,
         }
@@ -464,6 +686,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             fold_metadata_root / f"seed_{fold.seed}_fold_{fold.fold}.json",
             fold_record,
         )
+        if fold_record["checkpoint_retained"]:
+            retained_checkpoint_bytes += result.checkpoint_size_bytes
+        else:
+            checkpoint.resolve().relative_to(output_path.resolve())
+            shutil.rmtree(checkpoint)
     if any(np.isnan(values).any() for values in oof_by_seed.values()):
         raise RuntimeError("Reproduction OOF probabilities do not cover every official row")
     mean_probabilities = np.mean(np.stack(tuple(oof_by_seed.values())), axis=0)
@@ -541,8 +768,8 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "candidate_accepted_at_050": candidate_share <= 0.90,
     }
     reproduction_config = {
-        "mode": "reproduce",
-        "candidate": SMOKE_CANDIDATE,
+        "mode": args.mode,
+        "candidate": candidate_name,
         "model_snapshot": MODEL_SNAPSHOT,
         "model_path_role": "repository_ignored_authenticated_snapshot",
         "seeds": list(VALIDATION_SEEDS),
@@ -558,7 +785,9 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "precision": "cuda_fp16",
         "dataloader_workers": 0,
         "early_stopping": "none",
-        "checkpoint_selection": config.checkpoint_policy,
+        "checkpoint_selection": (
+            "final_epoch_historical_v3_cv" if historical else config.checkpoint_policy
+        ),
         "threshold_grid": list(config.threshold_grid),
         "git_commit": _git_commit(root),
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -570,6 +799,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "torch_version": torch.__version__,
         "cuda_runtime": torch.version.cuda,
         "checkpoint_total_bytes": checkpoint_total_bytes,
+        "retained_checkpoint_bytes": retained_checkpoint_bytes,
     }
     _write_json(output_path / "config.json", reproduction_config)
     _write_json(output_path / "fold_metrics.json", {"folds": fold_records})
@@ -580,7 +810,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             "threshold_selection": threshold_report,
         },
     )
-    _write_json(output_path / "truncation.json", prepared.truncation_summary)
+    _write_json(output_path / "truncation.json", truncation_summary)
     _write_json(output_path / "runtime.json", runtime)
     _write_json(
         output_path / "log.json",
@@ -602,15 +832,16 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse, validate, and run the sole authorized CLI mode."""
+    """Parse, validate, and run one explicitly bounded CLI mode."""
     parser = build_cli_parser()
     args = parser.parse_args(argv)
     try:
-        result = (
-            run_smoke(args, repository_root())
-            if args.mode == "smoke"
-            else run_reproduction(args, repository_root())
-        )
+        if args.mode == "smoke":
+            result = run_smoke(args, repository_root())
+        elif args.mode == "diagnose-reproduction":
+            result = run_reproduction_diagnostics(args, repository_root())
+        else:
+            result = run_reproduction(args, repository_root())
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         parser.exit(2, f"error: {exc}\n")
     print(json.dumps(result, sort_keys=True))

@@ -6,11 +6,15 @@ from pathlib import Path
 import pytest
 
 from olikbochon.v4_runner import (
+    HISTORICAL_CANDIDATE,
     SMOKE_CANDIDATE,
     build_cli_parser,
+    historical_control_config,
     official_training_path,
     require_approved_model_path,
     require_smoke_output_path,
+    validate_diagnostic_arguments,
+    validate_historical_control_arguments,
     validate_reproduction_arguments,
     validate_smoke_arguments,
 )
@@ -66,8 +70,8 @@ def test_v4_cli_help_exposes_only_the_bounded_interfaces() -> None:
         "--output-dir",
     ):
         assert option in help_text
-    assert "{smoke,reproduce}" in help_text
-    assert f"{{{SMOKE_CANDIDATE}}}" in help_text
+    assert "{smoke,reproduce,diagnose-reproduction,historical-control}" in help_text
+    assert f"{{{SMOKE_CANDIDATE},{HISTORICAL_CANDIDATE}}}" in help_text
 
 
 def test_smoke_cli_rejects_unapproved_model_and_artifact_roots(tmp_path: Path) -> None:
@@ -192,3 +196,74 @@ def test_reproduce_cli_rejects_smoke_controls_and_other_output_names(tmp_path: P
     args.seed = 17
     with pytest.raises(ValueError, match="does not accept"):
         validate_reproduction_arguments(args, tmp_path)
+
+
+def test_diagnostic_cli_requires_existing_completed_reproduction(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("artifacts/v4/\n", encoding="utf-8")
+    model = (tmp_path / "data" / "models" / "snapshot").resolve()
+    model.mkdir(parents=True)
+    output = (tmp_path / "artifacts" / "v4" / "v3_reproduction").resolve()
+    output.mkdir(parents=True)
+    args = build_cli_parser().parse_args(
+        [
+            "--mode",
+            "diagnose-reproduction",
+            "--model-path",
+            str(model),
+            "--candidate",
+            SMOKE_CANDIDATE,
+            "--seeds",
+            "17",
+            "29",
+            "43",
+            "--folds",
+            "5",
+            "--max-length",
+            "256",
+            "--output-dir",
+            str(output),
+        ]
+    )
+    assert validate_diagnostic_arguments(args, tmp_path) == (model, output)
+
+
+def test_historical_control_cli_is_exact_and_cannot_overwrite(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("artifacts/v4/\n", encoding="utf-8")
+    model = (tmp_path / "data" / "models" / "snapshot").resolve()
+    model.mkdir(parents=True)
+    output = (tmp_path / "artifacts" / "v4" / "v3_historical_control").resolve()
+    args = build_cli_parser().parse_args(
+        [
+            "--mode",
+            "historical-control",
+            "--model-path",
+            str(model),
+            "--candidate",
+            HISTORICAL_CANDIDATE,
+            "--seeds",
+            "17",
+            "29",
+            "43",
+            "--folds",
+            "5",
+            "--max-length",
+            "512",
+            "--output-dir",
+            str(output),
+        ]
+    )
+    assert validate_historical_control_arguments(args, tmp_path) == (model, output)
+    args.max_length = 256
+    with pytest.raises(ValueError, match="length 512"):
+        validate_historical_control_arguments(args, tmp_path)
+
+
+def test_historical_control_training_values_are_frozen() -> None:
+    config = historical_control_config()
+    assert config.maximum_length == 512
+    assert config.field_budget.maximum_length == 512
+    assert config.epochs == 4
+    assert config.learning_rate == 1e-5
+    assert config.batch_size == 8
+    assert config.gradient_accumulation == 2
+    assert config.mixed_precision == "fp16"
