@@ -164,8 +164,10 @@ Promote a candidate only when gains appear across folds/seeds and both context r
 
 ## Version 4-A retrieval-reproduction contract
 
-- Authenticate official competition hashes and the pinned
-  `abyaadrafid/bnwiki` version-1 path-and-content manifest before loading rows.
+- Authenticate official competition hashes before loading rows. Dynamically find
+  the `abyaadrafid/bnwiki` AA/AB/AC/AD layout, require at least 250 `wiki_*`
+  chunks, discard only byte-identical duplicate layouts, strictly parse every
+  selected chunk, and record the discovered count and aggregate bytes.
 - Report the public source method's ordinary no-context five-fold OOF cutoff
   score as an explicitly optimistic `Original-method ... tuning estimate`.
 - Independently group exact normalized rows and every response sharing a

@@ -1,6 +1,7 @@
 .venv/
 data/
 outputs/
+artifacts/kaggle/
 .ipynb_checkpoints/
 __pycache__/
 *.py[cod]
@@ -33,4 +34,3 @@ mlruns/
 .jupyter/
 .idea/
 .vscode/
-

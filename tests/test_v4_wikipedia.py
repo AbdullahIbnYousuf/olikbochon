@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib
+import json
 from pathlib import Path
 
 import numpy as np
@@ -41,16 +41,11 @@ def test_lexical_features_reproduce_number_and_overlap_semantics() -> None:
     assert missing["number_overlap_ratio"] == 0.0
 
 
-def test_wikipedia_pin_matches_single_logical_kaggle_mount() -> None:
-    assert v4.WIKI_FILE_COUNT == 301
-    assert v4.WIKI_TOTAL_SIZE == 312_927_965
-    assert (
-        v4.WIKI_CONTENT_MANIFEST_SHA256
-        == "052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2"
-    )
-    assert len(v4.EXPECTED_WIKI_RELATIVE_NAMES) == 301
-    assert "AA/wiki_00" in v4.EXPECTED_WIKI_RELATIVE_NAMES
-    assert not any(name.startswith("lolol/") for name in v4.EXPECTED_WIKI_RELATIVE_NAMES)
+def test_wikipedia_discovery_policy_is_dynamic_with_a_safety_floor() -> None:
+    assert v4.MIN_WIKI_CHUNK_COUNT == 250
+    assert v4.WIKI_SECTION_NAMES == ("AA", "AB", "AC", "AD")
+    assert v4.WIKI_CHUNK_PATTERN.fullmatch("wiki_00")
+    assert not v4.WIKI_CHUNK_PATTERN.fullmatch("wiki_00.json")
 
 
 def test_duplicate_groups_keep_prompt_context_family_together() -> None:
@@ -113,12 +108,12 @@ def _write(path: Path, payload: bytes) -> Path:
     return path
 
 
-def _manifest_digest(root: Path, paths: tuple[Path, ...]) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(paths):
-        relative = path.relative_to(root).as_posix()
-        digest.update(f"{v4.sha256_file(path)}  ./{relative}\n".encode())
-    return digest.hexdigest()
+def _wiki_record(name: str) -> bytes:
+    payload = {
+        "url": f"https://bn.wikipedia.org/wiki/{name}",
+        "text": f"শিরোনাম {name}\n\n" + "বাংলা বিশ্বকোষের যাচাইযোগ্য নিবন্ধের লেখা। " * 3,
+    }
+    return (json.dumps(payload, ensure_ascii=False) + "\n").encode()
 
 
 def synthetic_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
@@ -127,18 +122,11 @@ def synthetic_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     test = _write(competition / v4.TEST_FILENAME, b"test")
     sample = _write(competition / "sample submission.csv", b"sample")
     wiki = tmp_path / "datasets" / "abyaadrafid" / "bnwiki" / "lolol"
-    chunks = (
-        _write(wiki / "AA" / "wiki_00", b"first"),
-        _write(wiki / "AD" / "wiki_00", b"other"),
-    )
+    _write(wiki / "AA" / "wiki_00", _wiki_record("first"))
+    _write(wiki / "AD" / "wiki_00", _wiki_record("other"))
     (wiki / "AB").mkdir()
     (wiki / "AC").mkdir()
-    monkeypatch.setattr(
-        v4, "EXPECTED_WIKI_RELATIVE_NAMES", frozenset({"AA/wiki_00", "AD/wiki_00"})
-    )
-    monkeypatch.setattr(v4, "WIKI_FILE_COUNT", 2)
-    monkeypatch.setattr(v4, "WIKI_TOTAL_SIZE", 10)
-    monkeypatch.setattr(v4, "WIKI_CONTENT_MANIFEST_SHA256", _manifest_digest(wiki, chunks))
+    monkeypatch.setattr(v4, "MIN_WIKI_CHUNK_COUNT", 2)
     monkeypatch.setattr(
         v4,
         "KNOWN_FILE_HASHES",
@@ -159,6 +147,12 @@ def test_nested_input_discovery_authenticates_official_and_wikipedia(
     assert files.competition_root == competition
     assert files.wikipedia_root == wiki
     assert len(files.wikipedia_chunks) == 2
+    assert files.wikipedia_duplicate_path_count == 0
+    summary = v4.safe_discovery_summary(files)
+    assert summary["wikipedia_chunk_count"] == 2
+    assert summary["wikipedia_total_size"] == sum(
+        path.stat().st_size for path in files.wikipedia_chunks
+    )
 
 
 def test_competition_ambiguity_fails_clearly(
@@ -173,11 +167,86 @@ def test_competition_ambiguity_fails_clearly(
         v4.discover_v4_files(tmp_path)
 
 
-def test_duplicate_archive_tree_is_rejected_as_an_extra_root(
+def test_official_competition_hash_validation_remains_strict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    competition, _ = synthetic_inputs(tmp_path, monkeypatch)
+    _write(competition / v4.TEST_FILENAME, b"changed-after-pin")
+    with pytest.raises(v4.V4DiscoveryError, match="Official file digest mismatch"):
+        v4.discover_v4_files(tmp_path)
+
+
+def test_byte_identical_duplicate_archive_tree_is_deduplicated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, wiki = synthetic_inputs(tmp_path, monkeypatch)
-    _write(wiki / "lolol" / "AA" / "wiki_00", b"first")
-    _write(wiki / "lolol" / "AD" / "wiki_00", b"other")
-    with pytest.raises(v4.V4DiscoveryError, match="No mounted"):
+    duplicate = wiki / "lolol"
+    _write(duplicate / "AA" / "wiki_00", _wiki_record("first"))
+    _write(duplicate / "AD" / "wiki_00", _wiki_record("other"))
+    (duplicate / "AB").mkdir()
+    (duplicate / "AC").mkdir()
+
+    files = v4.discover_v4_files(tmp_path)
+
+    assert files.wikipedia_root == wiki
+    assert len(files.wikipedia_chunks) == 2
+    assert files.wikipedia_duplicate_path_count == 2
+
+
+def test_distinct_duplicate_archive_tree_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, wiki = synthetic_inputs(tmp_path, monkeypatch)
+    duplicate = wiki / "lolol"
+    _write(duplicate / "AA" / "wiki_00", _wiki_record("changed"))
+    _write(duplicate / "AD" / "wiki_00", _wiki_record("other"))
+    (duplicate / "AB").mkdir()
+    (duplicate / "AC").mkdir()
+    with pytest.raises(v4.V4DiscoveryError, match="More than one distinct"):
         v4.discover_v4_files(tmp_path)
+
+
+def test_wikipedia_discovery_rejects_too_few_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    synthetic_inputs(tmp_path, monkeypatch)
+    monkeypatch.setattr(v4, "MIN_WIKI_CHUNK_COUNT", 3)
+    with pytest.raises(v4.V4DiscoveryError, match="at least 3"):
+        v4.discover_v4_files(tmp_path)
+
+
+def test_wikipedia_chunks_parse_strictly_before_retrieval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, _ = synthetic_inputs(tmp_path, monkeypatch)
+    files = v4.discover_v4_files(tmp_path)
+
+    corpus = v4.load_wikipedia_corpus(files)
+
+    assert corpus.source_chunk_count == 2
+    assert corpus.decoded_line_count == 2
+    assert corpus.rejected_line_count == 0
+    assert len(corpus.articles) == 2
+
+
+@pytest.mark.parametrize(
+    "invalid_payload, message",
+    [
+        (b"not json\n", "invalid JSON"),
+        (b"[]\n", "non-object"),
+        (b'{"url":"x","text":7}\n', "non-string text"),
+        (b"\n", "contains no JSON records"),
+    ],
+)
+def test_wikipedia_parse_validation_rejects_invalid_chunks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_payload: bytes,
+    message: str,
+) -> None:
+    _, wiki = synthetic_inputs(tmp_path, monkeypatch)
+    _write(wiki / "AA" / "wiki_00", invalid_payload)
+    files = v4.discover_v4_files(tmp_path)
+
+    with pytest.raises(DataValidationError, match=message):
+        v4.load_wikipedia_corpus(files)

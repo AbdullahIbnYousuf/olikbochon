@@ -8,12 +8,14 @@ The supplied Kaggle screenshots establish these public leaderboard results:
 |---|---:|---:|---|
 | [olikbochon_fullsqueeze](https://www.kaggle.com/code/mahdihasanqurishi/olikbochon-fullsqueeze) | 6 | **0.684** | Version 13 |
 | [notebook42f62bbcad](https://www.kaggle.com/code/nazifaanjum/notebook42f62bbcad) | 4 | **0.685** | Version 4 |
+| Project V4-A clean reproduction | 2 | **0.685** | Exact successful project source |
 | Project BanglaBERT V3 | — | **0.525** | Exact successful project source |
 
-Both public scores are treated as verified Kaggle results. They exceed V3 by
-0.159 and 0.160 respectively. The screenshots verify scores and version
-numbers; they do not resolve validation quality, data provenance, or offline
-reproducibility.
+Both public-source scores are treated as verified Kaggle results. Project V4-A
+has now independently reproduced the Wikipedia/lexical result at 0.685 using
+official competition inputs and safer validation. The scores and version
+numbers are confirmed; this does not make the external FullSqueeze
+implementation reproducible or eliminate V4-A's documented validation limits.
 
 The downloaded FullSqueeze notebook is Version 13, whose latest run is broken.
 It is not the exact implementation that produced 0.684. Statements about the
@@ -75,7 +77,8 @@ do not execute it or inspect its saved row-level outputs.
 
 The private competition duplicate is unnecessary. V4-A replaces it with the
 official competition attachment and independently reimplements the documented
-feature/retrieval method with safer validation.
+feature/retrieval method with safer validation. Project notebook Version 2
+completed in 1h 25m 38s and scored 0.685.
 
 ## Legitimately reproducible ideas
 
@@ -84,7 +87,7 @@ Rank 1 is strongest in each column.
 | Idea | Expected gain | Reproducibility | Offline feasibility |
 |---|---:|---:|---:|
 | Clean, provenance-audited QA/NLI adaptation | 1 | 4 | 3 |
-| Pinned Bengali Wikipedia retrieval for no-context prompts | 2 | 2 | 2 |
+| Source-declared Bengali Wikipedia retrieval for no-context prompts | 2 | 2 | 2 |
 | BanglaBERT-large with limited seed averaging | 3 | 3 | 4 |
 | One compact authenticated local judge | 4 | 5 | 5 |
 | Numeric and lexical consistency features | 5 | 1 | 1 |

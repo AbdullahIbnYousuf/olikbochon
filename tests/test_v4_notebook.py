@@ -117,3 +117,11 @@ def test_v4_outputs_include_aligned_oof_and_test_probabilities() -> None:
     assert "v4a_test_probabilities.csv" in source
     assert "validate_test_probability_artifact" in source
     assert "submitted_to_kaggle\": False" in source
+
+
+def test_v4_summary_records_dynamic_wikipedia_observations() -> None:
+    source = runtime_source()
+    assert '"discovered_file_count"' in source
+    assert '"discovered_aggregate_bytes"' in source
+    assert '"deduplicated_path_count"' in source
+    assert '"content_manifest_sha256"' not in source

@@ -20,14 +20,11 @@ from .v4_wikipedia import (
     RANDOM_STATE,
     RETRIEVAL_THRESHOLDS,
     SNIPPET_CHARACTERS,
-    WIKI_CONTENT_MANIFEST_SHA256,
     WIKI_DATASET_ID,
     WIKI_DATASET_LICENSE_METADATA,
     WIKI_DATASET_REF,
     WIKI_DATASET_VERSION,
-    WIKI_FILE_COUNT,
     WIKI_MAX_FEATURES,
-    WIKI_TOTAL_SIZE,
     WikipediaRetriever,
     discover_v4_files,
     evaluate_v4a,
@@ -87,7 +84,7 @@ def run_kaggle_v4a(
 
     files = discover_v4_files(input_root)
     discovery = safe_discovery_summary(files)
-    print("Authenticated official competition and pinned Bengali Wikipedia inputs.")
+    print("Authenticated official competition files and validated Bengali Wikipedia layout.")
     print(
         "Safe input summary:",
         {
@@ -96,6 +93,9 @@ def run_kaggle_v4a(
             "official_file_count": discovery["official_file_count"],
             "wikipedia_chunk_count": discovery["wikipedia_chunk_count"],
             "wikipedia_total_size": discovery["wikipedia_total_size"],
+            "wikipedia_duplicate_path_count": discovery[
+                "wikipedia_duplicate_path_count"
+            ],
         },
     )
 
@@ -178,12 +178,12 @@ def run_kaggle_v4a(
         "test_count": int(len(test)),
         "wikipedia": {
             "dataset_ref": WIKI_DATASET_REF,
-            "dataset_id": WIKI_DATASET_ID,
-            "dataset_version": WIKI_DATASET_VERSION,
+            "declared_dataset_id": WIKI_DATASET_ID,
+            "declared_dataset_version": WIKI_DATASET_VERSION,
             "kaggle_license_metadata": WIKI_DATASET_LICENSE_METADATA,
-            "chunk_count": WIKI_FILE_COUNT,
-            "total_size": WIKI_TOTAL_SIZE,
-            "content_manifest_sha256": WIKI_CONTENT_MANIFEST_SHA256,
+            "discovered_file_count": discovery["wikipedia_chunk_count"],
+            "discovered_aggregate_bytes": discovery["wikipedia_total_size"],
+            "deduplicated_path_count": discovery["wikipedia_duplicate_path_count"],
             "parsed_canonical_chunk_count": corpus.source_chunk_count,
             "decoded_line_count": corpus.decoded_line_count,
             "rejected_line_count": corpus.rejected_line_count,

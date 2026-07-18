@@ -46,7 +46,7 @@ def generate() -> None:
 # # Version 4-A — clean Bengali Wikipedia retrieval reproduction
 #
 # This notebook independently reproduces the public Version 4 lexical/Wikipedia method using only
-# the official competition input and pinned `abyaadrafid/bnwiki` version 1. It reports the original
+# the official competition input and `abyaadrafid/bnwiki`. It reports the original
 # same-OOF cutoff-tuning estimate separately from nested duplicate-aware grouped validation.
 # No Kaggle submission is made by this notebook.
 
@@ -54,8 +54,9 @@ def generate() -> None:
 # ## Input and safety contract
 #
 # Attach the official competition input and `abyaadrafid/bnwiki`. Keep internet off. The notebook
-# authenticates official hashes and the complete Wikipedia path-and-content manifest before parsing.
-# It never prints test text, IDs, probabilities, retrieved passages, or individual predictions.
+# authenticates official competition hashes, discovers a coherent AA/AB/AC/AD Wikipedia layout,
+# deduplicates byte-identical archive copies, and strictly parses every selected chunk. It never
+# prints test text, IDs, probabilities, retrieved passages, or individual predictions.
 
 # %%
 from __future__ import annotations

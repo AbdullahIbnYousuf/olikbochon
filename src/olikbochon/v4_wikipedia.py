@@ -27,11 +27,9 @@ WIKI_DATASET_REF = "abyaadrafid/bnwiki"
 WIKI_DATASET_ID = 228152
 WIKI_DATASET_VERSION = 1
 WIKI_DATASET_LICENSE_METADATA = "CC0-1.0"
-WIKI_FILE_COUNT = 301
-WIKI_TOTAL_SIZE = 312_927_965
-WIKI_CONTENT_MANIFEST_SHA256 = (
-    "052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2"
-)
+MIN_WIKI_CHUNK_COUNT = 250
+WIKI_SECTION_NAMES = ("AA", "AB", "AC", "AD")
+WIKI_CHUNK_PATTERN = re.compile(r"^wiki_\d+$")
 OFFICIAL_FILENAME = "dataset samples.json"
 TEST_FILENAME = "test set.csv"
 SAMPLE_SUBMISSION_NAMES = ("sample submission.csv", "sample_submission.csv")
@@ -61,12 +59,12 @@ NULL_CONTEXT_VALUES = {"", "nan", "[null]"}
 
 
 class V4DiscoveryError(RuntimeError):
-    """Raised when official competition or pinned Wikipedia inputs are unsafe."""
+    """Raised when official competition or discovered Wikipedia inputs are unsafe."""
 
 
 @dataclass(frozen=True)
 class V4Files:
-    """Resolved official competition and authenticated Wikipedia inputs."""
+    """Resolved official competition files and dynamically validated Wikipedia chunks."""
 
     official_train: Path
     test: Path
@@ -74,6 +72,7 @@ class V4Files:
     competition_root: Path
     wikipedia_root: Path
     wikipedia_chunks: tuple[Path, ...]
+    wikipedia_duplicate_path_count: int
 
 
 @dataclass(frozen=True)
@@ -128,91 +127,78 @@ class ValidationResults:
     group_audit: GroupAudit
 
 
-def _expected_wiki_relative_names() -> set[str]:
-    names: set[str] = set()
-    for directory in ("AA", "AB", "AC"):
-        names.update(f"{directory}/wiki_{index:02d}" for index in range(100))
-    names.add("AD/wiki_00")
-    return names
-
-
-EXPECTED_WIKI_RELATIVE_NAMES = frozenset(_expected_wiki_relative_names())
-
-
 def _wiki_chunks(root: Path) -> tuple[Path, ...]:
+    """Return direct WikiExtractor chunks beneath a coherent AA/AB/AC/AD root."""
     root = Path(root)
-    actual_files = {
-        path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()
-    }
-    if actual_files != EXPECTED_WIKI_RELATIVE_NAMES:
+    section_directories = tuple(root / name for name in WIKI_SECTION_NAMES)
+    if not all(path.is_dir() for path in section_directories):
         return ()
-    actual_directories = {
-        path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_dir()
-    }
-    if actual_directories != {"AA", "AB", "AC", "AD"}:
-        return ()
-    paths = tuple(root / name for name in sorted(EXPECTED_WIKI_RELATIVE_NAMES))
-    if len(paths) != WIKI_FILE_COUNT:
-        return ()
-    if sum(path.stat().st_size for path in paths) != WIKI_TOTAL_SIZE:
+    paths = tuple(
+        sorted(
+            path
+            for directory in section_directories
+            for path in directory.iterdir()
+            if path.is_file() and WIKI_CHUNK_PATTERN.fullmatch(path.name)
+        )
+    )
+    if len(paths) < MIN_WIKI_CHUNK_COUNT:
         return ()
     return paths
 
 
-def wikipedia_content_manifest_sha256(root: Path, chunks: tuple[Path, ...]) -> str:
-    """Hash the same path-and-content manifest used to pin Kaggle dataset version 1."""
-    digest = hashlib.sha256()
-    for path in sorted(chunks):
-        relative = path.relative_to(root).as_posix()
-        digest.update(f"{sha256_file(path)}  ./{relative}\n".encode())
-    return digest.hexdigest()
-
-
-def authenticate_wikipedia_root(root: Path) -> tuple[Path, ...]:
-    """Require the exact mounted version-1 content manifest before parsing articles."""
-    chunks = _wiki_chunks(Path(root))
-    if not chunks:
-        raise V4DiscoveryError("Bengali Wikipedia file names, count, or total size do not match pin")
-    observed = wikipedia_content_manifest_sha256(Path(root), chunks)
-    if observed != WIKI_CONTENT_MANIFEST_SHA256:
-        raise V4DiscoveryError(
-            "Bengali Wikipedia content-manifest digest mismatch: "
-            f"expected {WIKI_CONTENT_MANIFEST_SHA256}, observed {observed}"
+def _wiki_root_signature(root: Path, chunks: tuple[Path, ...]) -> tuple[tuple[str, int, str], ...]:
+    """Hash candidate roots only when needed to prove duplicate layouts are identical."""
+    return tuple(
+        (
+            path.relative_to(root).as_posix(),
+            path.stat().st_size,
+            sha256_file(path),
         )
-    return chunks
+        for path in chunks
+    )
 
 
-def _discover_wikipedia(root: Path) -> tuple[Path, tuple[Path, ...]]:
+def _discover_wikipedia(root: Path) -> tuple[Path, tuple[Path, ...], int]:
+    """Find one logical corpus, accepting byte-identical single or duplicate layouts."""
     candidates: set[Path] = set()
-    for directory in root.rglob("lolol"):
-        if directory.is_dir() and directory.parent.name == "bnwiki":
-            candidates.add(directory)
+    for path in root.rglob("wiki_*"):
+        if (
+            path.is_file()
+            and WIKI_CHUNK_PATTERN.fullmatch(path.name)
+            and path.parent.name in WIKI_SECTION_NAMES
+        ):
+            candidates.add(path.parent.parent)
     structural = [(candidate, _wiki_chunks(candidate)) for candidate in sorted(candidates)]
     structural = [(candidate, chunks) for candidate, chunks in structural if chunks]
     if not structural:
         raise V4DiscoveryError(
-            f"No mounted {WIKI_DATASET_REF} root matches the pinned version-1 manifest shape"
+            f"No mounted Wikipedia root has AA/AB/AC/AD and at least "
+            f"{MIN_WIKI_CHUNK_COUNT} valid wiki_* files"
         )
-    authenticated: list[tuple[Path, tuple[Path, ...]]] = []
-    failures: list[str] = []
-    for candidate, chunks in structural:
+
+    structural.sort(key=lambda item: (len(item[0].parts), str(item[0])))
+    selected_root, selected_chunks = structural[0]
+    duplicate_path_count = 0
+    if len(structural) > 1:
         try:
-            observed = wikipedia_content_manifest_sha256(candidate, chunks)
+            selected_signature = _wiki_root_signature(selected_root, selected_chunks)
+            for candidate, chunks in structural[1:]:
+                if _wiki_root_signature(candidate, chunks) != selected_signature:
+                    raise V4DiscoveryError(
+                        "More than one distinct Wikipedia corpus layout was found: "
+                        + "; ".join(str(path.resolve()) for path, _ in structural)
+                    )
+                duplicate_path_count += len(chunks)
         except OSError as exc:
-            failures.append(f"{candidate.resolve()}: {type(exc).__name__}")
-            continue
-        if observed == WIKI_CONTENT_MANIFEST_SHA256:
-            authenticated.append((candidate, chunks))
-        else:
-            failures.append(f"{candidate.resolve()}: digest mismatch")
-    if not authenticated:
-        raise V4DiscoveryError("No Wikipedia candidate authenticated: " + "; ".join(failures))
-    if len(authenticated) > 1:
+            raise V4DiscoveryError(
+                f"Wikipedia duplicate-layout comparison failed: {type(exc).__name__}"
+            ) from exc
+
+    if len(selected_chunks) < MIN_WIKI_CHUNK_COUNT:
         raise V4DiscoveryError(
-            "More than one authenticated Bengali Wikipedia root was found: "
-            + "; ".join(str(path.resolve()) for path, _ in authenticated)
+            f"Wikipedia discovery retained fewer than {MIN_WIKI_CHUNK_COUNT} chunks"
         )
-    return authenticated[0]
+    return selected_root, selected_chunks, duplicate_path_count
 
 
 def _discover_competition(root: Path) -> tuple[Path, Path]:
@@ -253,7 +239,7 @@ def discover_v4_files(root: Path = Path("/kaggle/input")) -> V4Files:
     """Recursively and independently resolve official competition and Wikipedia roots."""
     root = Path(root)
     competition_root, sample = _discover_competition(root)
-    wikipedia_root, chunks = _discover_wikipedia(root)
+    wikipedia_root, chunks, duplicate_path_count = _discover_wikipedia(root)
     files = V4Files(
         official_train=competition_root / OFFICIAL_FILENAME,
         test=competition_root / TEST_FILENAME,
@@ -261,6 +247,7 @@ def discover_v4_files(root: Path = Path("/kaggle/input")) -> V4Files:
         competition_root=competition_root,
         wikipedia_root=wikipedia_root,
         wikipedia_chunks=chunks,
+        wikipedia_duplicate_path_count=duplicate_path_count,
     )
     for path in (files.official_train, files.test, files.sample_submission):
         authenticate_official_file(path)
@@ -268,14 +255,15 @@ def discover_v4_files(root: Path = Path("/kaggle/input")) -> V4Files:
 
 
 def safe_discovery_summary(files: V4Files) -> dict[str, Any]:
-    """Return paths, counts, sizes, and hashes only; never inspect or expose rows."""
+    """Return safe paths, counts, and sizes only; never inspect or expose competition rows."""
     return {
         "competition_root": str(files.competition_root.resolve()),
         "wikipedia_root": str(files.wikipedia_root.resolve()),
         "official_file_count": 3,
         "wikipedia_chunk_count": len(files.wikipedia_chunks),
         "wikipedia_total_size": sum(path.stat().st_size for path in files.wikipedia_chunks),
-        "wikipedia_manifest_sha256": WIKI_CONTENT_MANIFEST_SHA256,
+        "wikipedia_duplicate_path_count": files.wikipedia_duplicate_path_count,
+        "wikipedia_minimum_chunk_count": MIN_WIKI_CHUNK_COUNT,
     }
 
 
@@ -374,49 +362,69 @@ def build_lexical_frame(contexts: list[str], responses: pd.Series) -> pd.DataFra
 
 
 def load_wikipedia_corpus(files: V4Files) -> WikipediaCorpus:
-    """Parse the single authenticated 301-file Kaggle-mounted logical root."""
+    """Strictly parse every dynamically discovered WikiExtractor chunk."""
     canonical = files.wikipedia_chunks
-    if len(canonical) != WIKI_FILE_COUNT:
-        raise DataValidationError("Pinned Wikipedia logical-root selection failed")
+    if len(canonical) < MIN_WIKI_CHUNK_COUNT:
+        raise DataValidationError(
+            f"Wikipedia corpus requires at least {MIN_WIKI_CHUNK_COUNT} valid chunks"
+        )
     records: list[dict[str, str]] = []
-    rejected = 0
     decoded = 0
     for path in canonical:
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    payload = json.loads(stripped)
-                except json.JSONDecodeError:
-                    rejected += 1
-                    continue
-                if not isinstance(payload, dict):
-                    rejected += 1
-                    continue
-                decoded += 1
-                text = str(payload.get("text", ""))
-                if "\n\n" in text:
-                    title, body = text.split("\n\n", 1)
-                else:
-                    title, body = text[:80], text
-                records.append(
-                    {
-                        "url": str(payload.get("url", "")),
-                        "title": title.strip(),
-                        "snippet": body.strip()[:SNIPPET_CHARACTERS],
-                    }
-                )
+        decoded_in_file = 0
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        payload = json.loads(stripped)
+                    except json.JSONDecodeError as exc:
+                        raise DataValidationError(
+                            f"Wikipedia chunk {path.name!r} has invalid JSON at line {line_number}"
+                        ) from exc
+                    if not isinstance(payload, dict):
+                        raise DataValidationError(
+                            f"Wikipedia chunk {path.name!r} has a non-object JSON record"
+                        )
+                    if not isinstance(payload.get("text", ""), str):
+                        raise DataValidationError(
+                            f"Wikipedia chunk {path.name!r} has a non-string text field"
+                        )
+                    decoded_in_file += 1
+                    decoded += 1
+                    text = str(payload.get("text", ""))
+                    if "\n\n" in text:
+                        title, body = text.split("\n\n", 1)
+                    else:
+                        title, body = text[:80], text
+                    records.append(
+                        {
+                            "url": str(payload.get("url", "")),
+                            "title": title.strip(),
+                            "snippet": body.strip()[:SNIPPET_CHARACTERS],
+                        }
+                    )
+        except UnicodeDecodeError as exc:
+            raise DataValidationError(
+                f"Wikipedia chunk {path.name!r} is not valid UTF-8"
+            ) from exc
+        except OSError as exc:
+            raise DataValidationError(
+                f"Wikipedia chunk {path.name!r} could not be read: {type(exc).__name__}"
+            ) from exc
+        if decoded_in_file == 0:
+            raise DataValidationError(f"Wikipedia chunk {path.name!r} contains no JSON records")
     articles = pd.DataFrame(records, columns=["url", "title", "snippet"])
     before = len(articles)
     articles = articles.drop_duplicates(subset="url", keep="first")
     duplicate_url_count = before - len(articles)
     articles = articles[articles["snippet"].str.len() > 50].reset_index(drop=True)
     if articles.empty:
-        raise DataValidationError("Pinned Wikipedia corpus produced no usable articles")
+        raise DataValidationError("Discovered Wikipedia corpus produced no usable articles")
     articles["search_blob"] = articles["title"] + " " + articles["snippet"]
-    return WikipediaCorpus(articles, len(canonical), decoded, rejected, duplicate_url_count)
+    return WikipediaCorpus(articles, len(canonical), decoded, 0, duplicate_url_count)
 
 
 class WikipediaRetriever:

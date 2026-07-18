@@ -4,16 +4,36 @@
 
 Version 4-A is a clean, independent reproduction of the lexical/Wikipedia idea
 from public Kaggle notebook `nazifaanjum/notebook42f62bbcad`, Version 4. The
-public source result is verified at **0.685**. V4-A itself has not been run or
-submitted on Kaggle, so no project score is claimed.
+public source result is verified at **0.685**. Project notebook
+`abdullahibnyousuf/v4-a-dynamic-wikipedia-discovery`, Version 2, completed and
+independently scored **0.685**. V4-A is therefore the current best project
+result, while remaining a baseline rather than a final winning system.
 
 The implementation uses only the official competition attachment and the
-pinned Wikipedia dataset. It does not use the source notebook's inaccessible
+declared Wikipedia dataset. It does not use the source notebook's inaccessible
 private competition-data copy, fallback IDs, file enumeration, or saved code.
 
-## Pinned Wikipedia input
+## Confirmed Kaggle result
 
-| Field | Pin |
+| Result | Value |
+|---|---:|
+| Successful notebook version | 2 |
+| Public leaderboard score | **0.685** |
+| Kaggle displayed runtime | **1h 25m 38s** |
+| Internal pipeline timer | 5,113.533819 seconds |
+| Honest grouped validation macro F1 | **0.6872701508** |
+| Honest grouped validation label-0 F1 | **0.7102803738** |
+| Test prediction distribution | label 0: 1,664; label 1: 852 |
+| Embedded runtime archive SHA-256 | `9dd66e6f70223adbaa3bd84a52f0c67d5009ea3aed8e627874cb1bd4886fc63c` |
+
+The displayed runtime includes Kaggle orchestration overhead; the internal
+timer starts inside the pipeline, so the two timing values are expected to
+differ slightly. The public score is one leaderboard observation and does not
+remove the validation limitations documented below.
+
+## Dynamically validated Wikipedia input
+
+| Field | Declared source |
 |---|---|
 | Kaggle dataset | [`abyaadrafid/bnwiki`](https://www.kaggle.com/datasets/abyaadrafid/bnwiki) |
 | Dataset title | Bangla Wikipedia Articles |
@@ -21,20 +41,20 @@ private competition-data copy, fallback IDs, file enumeration, or saved code.
 | Version | `1` |
 | Kaggle metadata update | 2019-06-11 18:06:12 UTC |
 | Kaggle metadata license | `CC0-1.0` |
-| Mounted chunk files | 301 |
-| Mounted bytes | 312,927,965 |
-| Content-manifest SHA-256 | `052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2` |
 
-The actual Kaggle dataset exposes one logical root, `lolol`, containing 301
-WikiExtractor chunks beneath `AA`, `AB`, `AC`, and `AD`. V4-A authenticates
-those exact paths, their total size, and every file's content digest. Articles
-are deduplicated by URL. No Wikipedia passage is printed or written to project
-outputs.
+For competition-speed and mount compatibility, V4-A does not require an exact
+per-file cryptographic manifest. It recursively finds coherent roots containing
+`AA`, `AB`, `AC`, and `AD`, accepts only direct `wiki_<number>` chunks, and
+requires at least 250 chunks. A single layout is used directly. If Kaggle exposes
+both the single and nested archive layouts, their relative paths, sizes, and
+SHA-256 digests must be byte-identical before one copy is discarded; distinct
+corpora remain an error. Every selected chunk must be valid UTF-8 containing
+JSON-object records before retrieval begins. Articles are then deduplicated by
+URL. No Wikipedia passage is printed or written to project outputs.
 
-The downloadable ZIP currently contains a second byte-identical historical
-tree at `lolol/lolol`, which explains the earlier doubled local count of 602.
-That duplicate archive tree is not part of the logical Kaggle-mounted manifest,
-is rejected as an extra directory, and is never required or indexed by V4-A.
+The discovered canonical file count, aggregate bytes, and number of discarded
+duplicate paths are recorded in the safe run summary. This makes corpus drift
+visible without making an exact historical mount shape a Kaggle startup blocker.
 
 The Kaggle publisher describes the material as a processed Bengali Wikipedia
 dump and labels the dataset CC0. Underlying Wikimedia text remains subject to
@@ -77,16 +97,28 @@ the public leaderboard is not used for local threshold selection.
 
 A successful internet-off Kaggle run creates:
 
-- `/kaggle/working/submission.csv` — schema- and ID-validated candidate, not yet submitted;
+- `/kaggle/working/submission.csv` — schema- and ID-validated scored submission;
 - `/kaggle/working/v4a_oof_probabilities.csv` — honest grouped OOF probabilities;
 - `/kaggle/working/v4a_test_probabilities.csv` — ID-aligned label-1 probabilities for a future V3 ensemble; and
 - `/kaggle/working/v4a_run_summary.json` — aggregate configuration and validation results.
 
 These are ignored runtime outputs. They must not be committed, printed, or
 uploaded outside the permitted Kaggle competition workflow.
-The aggregate run summary records the Kaggle Python, NumPy, pandas, and
-scikit-learn versions because small tokenizer, TF-IDF, or solver changes can
-affect exact reproduction.
+The aggregate run summary records the discovered Wikipedia count and bytes plus
+the Kaggle Python, NumPy, pandas, and scikit-learn versions because corpus or
+runtime changes can affect reproduction.
+
+The successful Version 2 outputs are preserved locally under the Git-ignored
+`artifacts/kaggle/v4a_0685/` directory:
+
+| Artifact | SHA-256 |
+|---|---|
+| `submission.csv` | `bdfcd907177fb35537ae33998c6427f65d3ce574d18f82ee3e656bdb4ee2fa19` |
+| `v4a_oof_probabilities.csv` | `78ee80a3f9944500090342170ccf60db7cbc793c7fbe6a17ad3e6a6906d51ea6` |
+| `v4a_test_probabilities.csv` | `2dd5ffa97c285727143fefe7d172bd02588368b7c3ff111088709ce0eb27adc2` |
+| `v4a_run_summary.json` | `b30dabf16cacf0bb684791740cf1d486b73bade27ff6805edb9daf0bccffca85` |
+
+See `docs/EXPERIMENT_ARTIFACT_INVENTORY.md` for the complete V1–V4 audit.
 
 ## Kaggle preflight
 
@@ -94,7 +126,8 @@ affect exact reproduction.
 2. Attach the official Bengali hallucination competition input.
 3. Attach `abyaadrafid/bnwiki`, version 1.
 4. Select CPU and keep internet disabled.
-5. Run from a fresh session and verify the input-manifest authentication.
-6. Record both validation estimates and runtime without submitting.
+5. Run from a fresh session and verify the dynamic Wikipedia discovery and parse summary.
+6. Record both validation estimates and runtime; do not create another
+   leaderboard submission without a separately justified experiment.
 
 Version 4-A does not modify V3 and does not yet define a V3/V4 ensemble.
