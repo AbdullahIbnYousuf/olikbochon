@@ -1,6 +1,14 @@
 # অলীকবচন — Local Competition Workspace
 
-Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 3 is the current best scored baseline at **0.525** on the public leaderboard, improving by **0.059** over Version 1's **0.466** TF-IDF result. Its self-contained authenticated BanglaBERT GPU notebook completed in **6 minutes 9 seconds**, selected **Arm A (official-only BanglaBERT)**, rejected the public-5K-adapted Arm B, and deployed threshold **0.54**. Version 2 remains a useful negative TF-IDF experiment at **0.426**. No fixed-0.50 Version 3 submission was made. Version 3 is still a baseline, not the final winning system.
+Ubuntu workspace for the Kaggle competition **অলীকবচন: Bengali LLM Hallucination Detection Challenge**. Version 3 is the current best **project** baseline at **0.525** on the public leaderboard, improving by **0.059** over Version 1's **0.466** TF-IDF result. Its self-contained authenticated BanglaBERT GPU notebook completed in **6 minutes 9 seconds**, selected **Arm A (official-only BanglaBERT)**, rejected the public-5K-adapted Arm B, and deployed threshold **0.54**. Version 2 remains a useful negative TF-IDF experiment at **0.426**.
+
+Public Kaggle screenshots verify substantially stronger external results:
+`olikbochon_fullsqueeze` Version 6 scored **0.684**, and
+`notebook42f62bbcad` Version 4 scored **0.685**. Their scores are confirmed,
+while their validation quality and exact reproducibility are separate issues.
+The clean V4-A branch independently reproduces the latter's Wikipedia/lexical
+method with official inputs, pinned data, grouped validation, and safe
+probability artifacts. V4-A has not been run or submitted yet.
 
 ## Directory layout
 

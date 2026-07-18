@@ -5,4 +5,9 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py314"
-extend-exclude = ["src/ftfy", "src/wcwidth"]
+extend-exclude = [
+    "src/ftfy",
+    "src/wcwidth",
+    "notebook42f62bbcad.ipynb",
+    "olikbochon-fullsqueeze.ipynb",
+]
