@@ -9,6 +9,8 @@ artifacts/v8/
 artifacts/v9/
 artifacts/v10/
 artifacts/v11/
+artifacts/v12/
+artifacts/submissions/v12_deadline_qa_verifier/
 artifacts/shared/
 artifacts/submissions/
 .ipynb_checkpoints/
