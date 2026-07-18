@@ -13,6 +13,7 @@ from olikbochon.v6_null_neural import (
     CANDIDATE_L,
     HEAD_LEARNING_RATE,
     MAXIMUM_LENGTH,
+    ROUTED_CHAMPION,
     TOP_LAYER_LEARNING_RATE,
     _load_delta_checkpoint,
     _save_delta_checkpoint,
@@ -96,6 +97,7 @@ def test_class_weights_use_only_supplied_training_labels() -> None:
 
 
 def test_present_route_remains_the_frozen_substring_rule() -> None:
+    assert ROUTED_CHAMPION == 0.692051
     assert deterministic_substring_prediction("ঢাকা ২০২৬", "ঢাকা 2026") == 1
     assert deterministic_substring_prediction("ঢাকা", "চট্টগ্রাম") == 0
 

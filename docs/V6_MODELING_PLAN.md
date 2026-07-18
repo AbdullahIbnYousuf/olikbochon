@@ -78,7 +78,7 @@ rejected when either predicted class exceeds 90%.
 
 J and K pass only at null-route macro F1 at least 0.58 with no collapse. L is reported as
 a diagnostic full-fine-tuning control. Comparisons are frozen against the null sparse
-champion 0.574025 and routed champion 0.683111. If J or K passes, the predeclared next
+champion 0.574025 and routed champion 0.692051. If J or K passes, the predeclared next
 direction is sparse-plus-neural hybrid evaluation; if only L reaches 0.58, it is a
 null-route neural-model signal; otherwise the next direction is retrieval/NLI.
 
