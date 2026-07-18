@@ -4,6 +4,7 @@ outputs/
 artifacts/v4/
 artifacts/v5/
 artifacts/v6/
+artifacts/v7/
 artifacts/shared/
 .ipynb_checkpoints/
 __pycache__/
