@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import io
 import json
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import nbformat
@@ -36,6 +38,11 @@ def test_runtime_archive_is_deterministic_and_notebook_is_synchronized() -> None
     first = build_runtime_archive(ROOT)
     second = build_runtime_archive(ROOT)
     assert first == second
+    with zipfile.ZipFile(io.BytesIO(first[0])) as archive:
+        entries = archive.infolist()
+    assert [entry.filename for entry in entries] == sorted(first[2])
+    assert all(entry.create_system == 3 for entry in entries)
+    assert all(entry.date_time == (1980, 1, 1, 0, 0, 0) for entry in entries)
     constants = _notebook_constants()
     assert constants["RUNTIME_ARCHIVE_SHA256"] == first[1]
     assert constants["RUNTIME_FILE_MANIFEST"] == first[2]
