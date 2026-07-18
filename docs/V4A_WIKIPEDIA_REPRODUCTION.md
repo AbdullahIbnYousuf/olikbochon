@@ -21,14 +21,20 @@ private competition-data copy, fallback IDs, file enumeration, or saved code.
 | Version | `1` |
 | Kaggle metadata update | 2019-06-11 18:06:12 UTC |
 | Kaggle metadata license | `CC0-1.0` |
-| Mounted chunk files | 602 |
-| Mounted bytes | 625,855,930 |
-| Content-manifest SHA-256 | `4726b7d40b7f2ea98997ac7784025aad2c5650279d343c6eab2c1cd545f1dd94` |
+| Mounted chunk files | 301 |
+| Mounted bytes | 312,927,965 |
+| Content-manifest SHA-256 | `052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2` |
 
-The mount contains two byte-identical directory copies of 301 WikiExtractor
-chunks. V4-A authenticates all 602 paths and contents, then parses only the
-canonical copy. Articles are deduplicated by URL. No Wikipedia passage is
-printed or written to project outputs.
+The actual Kaggle dataset exposes one logical root, `lolol`, containing 301
+WikiExtractor chunks beneath `AA`, `AB`, `AC`, and `AD`. V4-A authenticates
+those exact paths, their total size, and every file's content digest. Articles
+are deduplicated by URL. No Wikipedia passage is printed or written to project
+outputs.
+
+The downloadable ZIP currently contains a second byte-identical historical
+tree at `lolol/lolol`, which explains the earlier doubled local count of 602.
+That duplicate archive tree is not part of the logical Kaggle-mounted manifest,
+is rejected as an extra directory, and is never required or indexed by V4-A.
 
 The Kaggle publisher describes the material as a processed Bengali Wikipedia
 dump and labels the dataset CC0. Underlying Wikimedia text remains subject to

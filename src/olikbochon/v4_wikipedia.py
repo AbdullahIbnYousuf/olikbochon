@@ -27,10 +27,10 @@ WIKI_DATASET_REF = "abyaadrafid/bnwiki"
 WIKI_DATASET_ID = 228152
 WIKI_DATASET_VERSION = 1
 WIKI_DATASET_LICENSE_METADATA = "CC0-1.0"
-WIKI_FILE_COUNT = 602
-WIKI_TOTAL_SIZE = 625_855_930
+WIKI_FILE_COUNT = 301
+WIKI_TOTAL_SIZE = 312_927_965
 WIKI_CONTENT_MANIFEST_SHA256 = (
-    "4726b7d40b7f2ea98997ac7784025aad2c5650279d343c6eab2c1cd545f1dd94"
+    "052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2"
 )
 OFFICIAL_FILENAME = "dataset samples.json"
 TEST_FILENAME = "test set.csv"
@@ -130,10 +130,9 @@ class ValidationResults:
 
 def _expected_wiki_relative_names() -> set[str]:
     names: set[str] = set()
-    for prefix in ("lolol", "lolol/lolol"):
-        for directory in ("AA", "AB", "AC"):
-            names.update(f"{prefix}/{directory}/wiki_{index:02d}" for index in range(100))
-        names.add(f"{prefix}/AD/wiki_00")
+    for directory in ("AA", "AB", "AC"):
+        names.update(f"{directory}/wiki_{index:02d}" for index in range(100))
+    names.add("AD/wiki_00")
     return names
 
 
@@ -141,10 +140,18 @@ EXPECTED_WIKI_RELATIVE_NAMES = frozenset(_expected_wiki_relative_names())
 
 
 def _wiki_chunks(root: Path) -> tuple[Path, ...]:
-    paths = tuple(sorted(path for path in root.rglob("wiki_*") if path.is_file()))
-    relative_names = {path.relative_to(root).as_posix() for path in paths}
-    if relative_names != EXPECTED_WIKI_RELATIVE_NAMES:
+    root = Path(root)
+    actual_files = {
+        path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()
+    }
+    if actual_files != EXPECTED_WIKI_RELATIVE_NAMES:
         return ()
+    actual_directories = {
+        path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_dir()
+    }
+    if actual_directories != {"AA", "AB", "AC", "AD"}:
+        return ()
+    paths = tuple(root / name for name in sorted(EXPECTED_WIKI_RELATIVE_NAMES))
     if len(paths) != WIKI_FILE_COUNT:
         return ()
     if sum(path.stat().st_size for path in paths) != WIKI_TOTAL_SIZE:
@@ -178,8 +185,8 @@ def authenticate_wikipedia_root(root: Path) -> tuple[Path, ...]:
 def _discover_wikipedia(root: Path) -> tuple[Path, tuple[Path, ...]]:
     candidates: set[Path] = set()
     for directory in root.rglob("lolol"):
-        if directory.is_dir():
-            candidates.add(directory.parent)
+        if directory.is_dir() and directory.parent.name == "bnwiki":
+            candidates.add(directory)
     structural = [(candidate, _wiki_chunks(candidate)) for candidate in sorted(candidates)]
     structural = [(candidate, chunks) for candidate, chunks in structural if chunks]
     if not structural:
@@ -367,17 +374,10 @@ def build_lexical_frame(contexts: list[str], responses: pd.Series) -> pd.DataFra
 
 
 def load_wikipedia_corpus(files: V4Files) -> WikipediaCorpus:
-    """Parse only the canonical copy after authenticating both mounted copies."""
-    canonical = tuple(
-        path
-        for path in files.wikipedia_chunks
-        if path.relative_to(files.wikipedia_root).parts[:2] == ("lolol", "AA")
-        or path.relative_to(files.wikipedia_root).parts[:2] == ("lolol", "AB")
-        or path.relative_to(files.wikipedia_root).parts[:2] == ("lolol", "AC")
-        or path.relative_to(files.wikipedia_root).parts[:2] == ("lolol", "AD")
-    )
-    if len(canonical) != WIKI_FILE_COUNT // 2:
-        raise DataValidationError("Pinned Wikipedia canonical-copy selection failed")
+    """Parse the single authenticated 301-file Kaggle-mounted logical root."""
+    canonical = files.wikipedia_chunks
+    if len(canonical) != WIKI_FILE_COUNT:
+        raise DataValidationError("Pinned Wikipedia logical-root selection failed")
     records: list[dict[str, str]] = []
     rejected = 0
     decoded = 0

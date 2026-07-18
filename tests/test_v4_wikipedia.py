@@ -41,6 +41,18 @@ def test_lexical_features_reproduce_number_and_overlap_semantics() -> None:
     assert missing["number_overlap_ratio"] == 0.0
 
 
+def test_wikipedia_pin_matches_single_logical_kaggle_mount() -> None:
+    assert v4.WIKI_FILE_COUNT == 301
+    assert v4.WIKI_TOTAL_SIZE == 312_927_965
+    assert (
+        v4.WIKI_CONTENT_MANIFEST_SHA256
+        == "052ce8d9061de8d1f3c9a4cd6814f9c54b6cc92953546845bc0595767c23bcc2"
+    )
+    assert len(v4.EXPECTED_WIKI_RELATIVE_NAMES) == 301
+    assert "AA/wiki_00" in v4.EXPECTED_WIKI_RELATIVE_NAMES
+    assert not any(name.startswith("lolol/") for name in v4.EXPECTED_WIKI_RELATIVE_NAMES)
+
+
 def test_duplicate_groups_keep_prompt_context_family_together() -> None:
     frame = labeled_frame(8)
     audit = v4.build_duplicate_groups(frame)
@@ -114,14 +126,16 @@ def synthetic_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
     official = _write(competition / v4.OFFICIAL_FILENAME, b"official")
     test = _write(competition / v4.TEST_FILENAME, b"test")
     sample = _write(competition / "sample submission.csv", b"sample")
-    wiki = tmp_path / "datasets" / "abyaadrafid" / "bnwiki"
+    wiki = tmp_path / "datasets" / "abyaadrafid" / "bnwiki" / "lolol"
     chunks = (
-        _write(wiki / "lolol" / "AA" / "wiki_00", b"first"),
-        _write(wiki / "lolol" / "lolol" / "AA" / "wiki_00", b"first"),
+        _write(wiki / "AA" / "wiki_00", b"first"),
+        _write(wiki / "AD" / "wiki_00", b"other"),
     )
-    monkeypatch.setattr(v4, "EXPECTED_WIKI_RELATIVE_NAMES", frozenset({
-        "lolol/AA/wiki_00", "lolol/lolol/AA/wiki_00"
-    }))
+    (wiki / "AB").mkdir()
+    (wiki / "AC").mkdir()
+    monkeypatch.setattr(
+        v4, "EXPECTED_WIKI_RELATIVE_NAMES", frozenset({"AA/wiki_00", "AD/wiki_00"})
+    )
     monkeypatch.setattr(v4, "WIKI_FILE_COUNT", 2)
     monkeypatch.setattr(v4, "WIKI_TOTAL_SIZE", 10)
     monkeypatch.setattr(v4, "WIKI_CONTENT_MANIFEST_SHA256", _manifest_digest(wiki, chunks))
@@ -156,4 +170,14 @@ def test_competition_ambiguity_fails_clearly(
     _write(second / v4.TEST_FILENAME, b"test")
     _write(second / "sample submission.csv", b"sample")
     with pytest.raises(v4.V4DiscoveryError, match="More than one coherent"):
+        v4.discover_v4_files(tmp_path)
+
+
+def test_duplicate_archive_tree_is_rejected_as_an_extra_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, wiki = synthetic_inputs(tmp_path, monkeypatch)
+    _write(wiki / "lolol" / "AA" / "wiki_00", b"first")
+    _write(wiki / "lolol" / "AD" / "wiki_00", b"other")
+    with pytest.raises(v4.V4DiscoveryError, match="No mounted"):
         v4.discover_v4_files(tmp_path)
