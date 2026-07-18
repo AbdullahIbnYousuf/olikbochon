@@ -41,6 +41,7 @@ LOGISTIC_CONFIG = {
     "solver": "liblinear",
     "random_state": 42,
 }
+UNLABELED_INFERENCE_COLUMNS = ("id", "context", "prompt_bn", "response_bn")
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,20 @@ def _require_absent_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if any(official_context_is_present(value) for value in validated["context"]):
         raise ValueError("Sparse null-route models accept context-absent rows only")
     return validated
+
+
+def _require_absent_unlabeled_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    if tuple(frame.columns) != UNLABELED_INFERENCE_COLUMNS:
+        raise ValueError(
+            "Sparse unlabeled inference requires exact id/context/prompt/response columns"
+        )
+    if frame["id"].isna().any():
+        raise ValueError("Sparse unlabeled inference IDs must not be missing")
+    if frame["prompt_bn"].isna().any() or frame["response_bn"].isna().any():
+        raise ValueError("Sparse unlabeled prompt and response values must not be missing")
+    if any(official_context_is_present(value) for value in frame["context"]):
+        raise ValueError("Sparse null-route models accept context-absent rows only")
+    return frame.copy(deep=True).reset_index(drop=True)
 
 
 def _finite_sparse(matrix: csr_matrix) -> None:
@@ -164,6 +179,11 @@ class SparseNullModel:
 
     def _matrix(self, frame: pd.DataFrame, *, fit: bool) -> csr_matrix:
         validated = _require_absent_frame(frame)
+        return self._matrix_from_validated(validated, fit=fit)
+
+    def _matrix_from_validated(
+        self, validated: pd.DataFrame, *, fit: bool
+    ) -> csr_matrix:
         blocks = self._sparse_blocks(validated, fit=fit)
         if self.candidate == CANDIDATES[4]:
             blocks.append(self._numeric_block(validated, fit=fit))
@@ -186,8 +206,23 @@ class SparseNullModel:
             raise RuntimeError("Sparse model must be fitted before transform")
         return self._matrix(frame, fit=False)
 
+    def transform_unlabeled(self, frame: pd.DataFrame) -> csr_matrix:
+        """Transform an exact unlabeled null-route frame without exposing any fit path."""
+        if self.training_row_count is None:
+            raise RuntimeError("Sparse model must be fitted before transform")
+        validated = _require_absent_unlabeled_frame(frame)
+        return self._matrix_from_validated(validated, fit=False)
+
     def predict_label1_probability(self, frame: pd.DataFrame) -> np.ndarray:
         matrix = self.transform(frame)
+        classes = list(self.classifier.classes_)
+        probabilities = self.classifier.predict_proba(matrix)[:, classes.index(1)]
+        if not np.isfinite(probabilities).all():
+            raise ValueError("Sparse probabilities contain NaN or Inf")
+        return probabilities.astype(np.float64)
+
+    def predict_unlabeled_label1_probability(self, frame: pd.DataFrame) -> np.ndarray:
+        matrix = self.transform_unlabeled(frame)
         classes = list(self.classifier.classes_)
         probabilities = self.classifier.predict_proba(matrix)[:, classes.index(1)]
         if not np.isfinite(probabilities).all():

@@ -6,6 +6,7 @@ artifacts/v5/
 artifacts/v6/
 artifacts/v7/
 artifacts/shared/
+artifacts/submissions/
 .ipynb_checkpoints/
 __pycache__/
 *.py[cod]
