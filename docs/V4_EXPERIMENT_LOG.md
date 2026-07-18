@@ -6,6 +6,8 @@ Gate 4 GPU smoke training passed. Gate 5 completed all 15 authorized fits but th
 V3-compatible baseline failed the frozen threshold-0.50 class-collapse acceptance guard.
 The schema-corrected rerun also completed 15 fits and failed the same primary collapse
 guard; its frozen-grid threshold 0.54 result is diagnostic only.
+The schema-corrected historical-schedule control completed 15 fits, failed the primary
+guard, and was approximately equivalent at its selected threshold 0.52.
 No submission or competition-test inference exists.
 
 Route audit correction (2026-07-18): the authenticated sample contains 167 literal
@@ -25,6 +27,7 @@ deleted or reinterpreted; the isolated corrected rerun is recorded below.
 |---:|---|---|
 | 1 | V3-compatible serialization, comparison encoder | Smoke passed; Gate 5 reproduction failed the 0.50 collapse guard |
 | 1a | Schema-corrected V3-compatible serialization, comparison encoder | Completed; failed the 0.50 collapse guard |
+| 1b | Schema-corrected preprocessing, historical V3 schedule | Completed; failed at 0.50 and approximately equivalent at selected threshold |
 | 2 | Structured serialization, comparison encoder | Not run |
 | 3 | Routed serialization, comparison encoder | Not run |
 | 4 | Selected serialization, field-aware encoder | Not run |
@@ -324,6 +327,126 @@ Classification: **failed schema-corrected baseline** because threshold 0.50 exce
 90% predicted-class guard. The balanced threshold-0.54 result and route-specific optima
 remain diagnostic and do not authorize deployment or another candidate.
 
+## Schema-corrected historical-schedule control
+
+Interpretation: **Schema-corrected V4 preprocessing with the historical V3 training
+schedule.** This is not an exact historical V3 reproduction. It used the identical
+authenticated sample, corrected 130/169 routing, seeds, folds, grouping, serialization,
+batch size, accumulation, weight decay, warmup, and threshold procedure as the corrected
+baseline. Only maximum length 512, four epochs, learning rate `1e-5`, and mandatory final
+epoch-4 checkpoint selection differed.
+
+All three seeds covered every official row exactly once. Every fold had zero group
+overlap, both validation labels, finite losses, final epoch 4 selected, and exact offline
+reload equality for probabilities, predictions, metrics, and validation loss. The split
+and route table in the preceding corrected-baseline section applies unchanged.
+
+### Aggregate and seed results
+
+| Scope | Threshold | Macro F1 | F1-0 | F1-1 | Accuracy | Confusion matrix | Predicted 0 / 1 |
+|---|---:|---:|---:|---:|---:|---|---:|
+| Seed 17 | 0.50 | 0.373109 | 0.054422 | 0.691796 | 0.535117 | `[[4,132],[7,156]]` | 11 / 288 |
+| Seed 29 | 0.50 | 0.411216 | 0.137500 | 0.684932 | 0.538462 | `[[11,125],[13,150]]` | 24 / 275 |
+| Seed 43 | 0.50 | 0.466608 | 0.290000 | 0.643216 | 0.525084 | `[[29,107],[35,128]]` | 64 / 235 |
+| Aggregate | 0.50 | 0.375394 | 0.066225 | 0.684564 | 0.528428 | `[[5,131],[10,153]]` | 15 / 284 |
+| Seed 17 | 0.52 | 0.577096 | 0.531835 | 0.622356 | 0.581940 | `[[71,65],[60,103]]` | 131 / 168 |
+| Seed 29 | 0.52 | 0.551252 | 0.482213 | 0.620290 | 0.561873 | `[[61,75],[56,107]]` | 117 / 182 |
+| Seed 43 | 0.52 | 0.546037 | 0.512635 | 0.579439 | 0.548495 | `[[71,65],[70,93]]` | 141 / 158 |
+| Aggregate | 0.52 | 0.559904 | 0.530466 | 0.589342 | 0.561873 | `[[74,62],[69,94]]` | 143 / 156 |
+
+At threshold 0.50, seed macro F1 mean/std/min/max were
+`0.416977560804665` / `0.0383876859329981` / `0.373108888788331` /
+`0.466608040201005`. The aggregate predicted-label-1 share was 94.98%, so the primary
+collapse guard failed. The frozen grid selected 0.52, with macro-F1 gain
+`0.1845093593292908`; its maximum predicted-class share was 52.17%, so the selected
+threshold passed the balance guard. Selected-threshold seed macro F1 mean/std/min/max
+were `0.5581282711110416` / `0.013579988216513543` / `0.5460373156989102` /
+`0.5770958507303936`.
+
+At the selected global threshold, context-present macro F1 was `0.386792` and
+context-absent macro F1 was `0.432496`. Diagnostic-only route optima were 0.56 for
+context-present rows (macro F1 `0.513499`, confusion matrix `[[15,32],[24,59]]`) and
+0.52 for context-absent rows (macro F1 `0.432496`, confusion matrix
+`[[74,15],[68,12]]`). Neither route threshold was deployed.
+
+### Direct corrected-baseline comparison
+
+| Metric | Corrected baseline | Historical-schedule control | Delta |
+|---|---:|---:|---:|
+| Selected global threshold | 0.54 | 0.52 | -0.02 |
+| Selected-threshold macro F1 | 0.565096 | 0.559904 | -0.005192 |
+| Threshold-0.50 macro F1 | 0.386019 | 0.375394 | -0.010625 |
+| Context-present diagnostic macro F1 | 0.541772 | 0.513499 | -0.028273 |
+| Context-absent diagnostic macro F1 | 0.450000 | 0.432496 | -0.017504 |
+
+The predeclared aggregate verdict is **approximately equivalent** because the selected
+macro-F1 change is between -0.01 and +0.01. Threshold-0.50 and context-absent changes are
+inconclusive under the predeclared bands; the context-present diagnostic degraded by more
+than 0.02. Both aggregate threshold-0.50 results remain collapsed.
+
+Across the 15 final-epoch fold records, macro F1 mean/std/min/max were
+`0.4025559760304357` / `0.06444606550192887` / `0.32977624784853704` /
+`0.5506349723217193`. Mean context-present and context-absent fold macro F1 were
+`0.3888662133652888` and `0.36487440948664845`.
+
+### Fold metrics at threshold 0.50
+
+| Seed/fold | Val loss | Macro F1 | F1-0 | F1-1 | Acc. | Confusion matrix | Pred. 0/1 | Present / absent macro F1 | Seconds | Peak bytes |
+|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 17/1 | 0.679976 | 0.351064 | 0.000000 | 0.702128 | 0.540984 | `[[0,28],[0,33]]` | 0/61 | 0.404762 / 0.307692 | 10.312 | 6014071296 |
+| 17/2 | 0.687947 | 0.329776 | 0.057143 | 0.602410 | 0.440678 | `[[1,26],[7,25]]` | 8/51 | 0.386364 / 0.245128 | 9.945 | 6016288768 |
+| 17/3 | 0.681453 | 0.354839 | 0.000000 | 0.709677 | 0.550000 | `[[0,27],[0,33]]` | 0/60 | 0.395349 / 0.320000 | 9.992 | 5992645632 |
+| 17/4 | 0.680477 | 0.394410 | 0.071429 | 0.717391 | 0.566667 | `[[1,26],[0,33]]` | 1/59 | 0.400000 / 0.371781 | 10.467 | 6011762176 |
+| 17/5 | 0.690777 | 0.428516 | 0.137931 | 0.719101 | 0.576271 | `[[2,25],[0,32]]` | 2/57 | 0.358974 / 0.471111 | 9.801 | 6033473024 |
+| 29/1 | 0.682985 | 0.344086 | 0.000000 | 0.688172 | 0.524590 | `[[0,28],[1,32]]` | 1/60 | 0.400000 / 0.291667 | 10.355 | 6009752064 |
+| 29/2 | 0.688688 | 0.351648 | 0.000000 | 0.703297 | 0.542373 | `[[0,27],[0,32]]` | 0/59 | 0.368421 / 0.339623 | 10.103 | 6016314880 |
+| 29/3 | 0.672810 | 0.351648 | 0.000000 | 0.703297 | 0.542373 | `[[0,27],[0,32]]` | 0/59 | 0.404255 / 0.295455 | 10.464 | 6028749312 |
+| 29/4 | 0.677010 | 0.400000 | 0.200000 | 0.600000 | 0.466667 | `[[4,23],[9,24]]` | 13/47 | 0.400000 / 0.325000 | 10.117 | 6023953408 |
+| 29/5 | 0.682739 | 0.550635 | 0.378378 | 0.722892 | 0.616667 | `[[7,20],[3,30]]` | 10/50 | 0.372093 / 0.619231 | 9.729 | 5998017024 |
+| 43/1 | 0.677502 | 0.351064 | 0.000000 | 0.702128 | 0.540984 | `[[0,28],[0,33]]` | 0/61 | 0.404255 / 0.297872 | 10.359 | 6004443648 |
+| 43/2 | 0.681852 | 0.394410 | 0.071429 | 0.717391 | 0.566667 | `[[1,26],[0,33]]` | 1/59 | 0.428571 / 0.345455 | 9.954 | 6005763072 |
+| 43/3 | 0.692888 | 0.464735 | 0.392157 | 0.537313 | 0.474576 | `[[10,17],[14,18]]` | 24/35 | 0.348837 / 0.388158 | 9.810 | 6005369856 |
+| 43/4 | 0.681226 | 0.499358 | 0.315789 | 0.682927 | 0.566667 | `[[6,21],[5,28]]` | 11/49 | 0.400000 / 0.477167 | 10.349 | 6023477760 |
+| 43/5 | 0.693103 | 0.472150 | 0.436364 | 0.507937 | 0.474576 | `[[12,15],[16,16]]` | 28/31 | 0.361111 / 0.377778 | 10.225 | 6006544896 |
+
+### Epoch losses
+
+Each cell is mean training loss / validation loss. Epoch 4 was retained for every fold.
+
+| Seed/fold | Epoch 1 | Epoch 2 | Epoch 3 | Epoch 4 |
+|---|---:|---:|---:|---:|
+| 17/1 | 0.696182 / 0.684170 | 0.685225 / 0.683730 | 0.681109 / 0.680064 | 0.678451 / 0.679976 |
+| 17/2 | 0.695603 / 0.690918 | 0.685268 / 0.689014 | 0.678886 / 0.688700 | 0.674597 / 0.687947 |
+| 17/3 | 0.699518 / 0.689559 | 0.685052 / 0.685205 | 0.683408 / 0.682902 | 0.682446 / 0.681453 |
+| 17/4 | 0.694457 / 0.687370 | 0.690132 / 0.683228 | 0.682824 / 0.681535 | 0.680508 / 0.680477 |
+| 17/5 | 0.696503 / 0.689039 | 0.685876 / 0.689213 | 0.677418 / 0.690339 | 0.676961 / 0.690777 |
+| 29/1 | 0.695410 / 0.689053 | 0.685842 / 0.687372 | 0.677737 / 0.683778 | 0.676514 / 0.682985 |
+| 29/2 | 0.689972 / 0.690728 | 0.682568 / 0.691530 | 0.679624 / 0.689230 | 0.670267 / 0.688688 |
+| 29/3 | 0.690133 / 0.684008 | 0.685783 / 0.678107 | 0.680488 / 0.673340 | 0.674233 / 0.672810 |
+| 29/4 | 0.692675 / 0.684310 | 0.682202 / 0.679875 | 0.680869 / 0.677743 | 0.676342 / 0.677010 |
+| 29/5 | 0.690651 / 0.686174 | 0.684680 / 0.685441 | 0.678081 / 0.683089 | 0.671143 / 0.682739 |
+| 43/1 | 0.691798 / 0.682633 | 0.691097 / 0.684506 | 0.680915 / 0.679567 | 0.678878 / 0.677502 |
+| 43/2 | 0.687891 / 0.687996 | 0.684246 / 0.688403 | 0.680942 / 0.683610 | 0.676315 / 0.681852 |
+| 43/3 | 0.688656 / 0.689453 | 0.678772 / 0.690554 | 0.674107 / 0.692962 | 0.672149 / 0.692888 |
+| 43/4 | 0.691537 / 0.689266 | 0.687148 / 0.683643 | 0.681816 / 0.684456 | 0.674477 / 0.681226 |
+| 43/5 | 0.691880 / 0.690066 | 0.681270 / 0.690380 | 0.672742 / 0.692135 | 0.668531 / 0.693103 |
+
+### Checkpoint integrity and outcome
+
+Every final checkpoint was `444062405` bytes. All 15 digests and split distributions are
+retained in ignored aggregate/fold JSON metadata. Exact reload passed 15/15 with zero
+missing or unexpected keys. Compact retention left only seed 17/fold 1, whose weight
+SHA-256 is `7f5de760ca2b30e040b6818cee59b370484be11c46d302825a500907a3d5183b`.
+
+Total wall-clock runtime was `160.57824299999993` seconds and maximum allocated VRAM was
+`6033473024` bytes. All selected checkpoints totaled `6660936075` transient bytes;
+retained checkpoint storage was `444062405` bytes plus aggregate JSON metadata. No
+optimizer state, scheduler state, or row-level probability array was persisted.
+
+Classification: **failed control at threshold 0.50** because it exceeded the 90% class
+guard. Relative to the corrected baseline, the historical schedule is **approximately
+equivalent** at the selected global threshold and does not justify adoption.
+
 ## Candidate comparison
 
 Not run. No candidate or threshold is selected.
@@ -338,6 +461,7 @@ Not run. No candidate or threshold is selected.
 - model snapshot: exact approved revision downloaded to an ignored local directory and
   authenticated before use;
 - training/checkpoint: one two-step smoke, the authorized legacy-compatible reproduction,
-  and the authorized schema-corrected 15-fit baseline; every selected checkpoint is
-  confined to ignored `artifacts/v4/`;
+  the authorized schema-corrected 15-fit baseline, and the authorized schema-corrected
+  historical-schedule control; every selected checkpoint is confined to ignored
+  `artifacts/v4/`;
 - prediction/submission: no competition-test prediction or submission was produced.

@@ -67,6 +67,8 @@ HISTORICAL_OUTPUT_NAME = "v3_historical_control"
 HISTORICAL_MAXIMUM_LENGTH = 512
 CORRECTED_CANDIDATE = "v4_schema_corrected_baseline"
 CORRECTED_OUTPUT_NAME = "schema_corrected_baseline"
+CORRECTED_HISTORICAL_CANDIDATE = "v4_schema_corrected_historical_schedule"
+CORRECTED_HISTORICAL_OUTPUT_NAME = "schema_corrected_historical_schedule"
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,11 @@ def historical_control_config() -> V4TrainingConfig:
         epochs=4,
         learning_rate=1e-5,
     )
+
+
+def corrected_historical_control_config() -> V4TrainingConfig:
+    """Apply the historical schedule to schema-corrected V4 preprocessing."""
+    return historical_control_config()
 
 
 def official_training_path(repository_root: Path) -> Path:
@@ -186,13 +193,19 @@ def build_cli_parser() -> argparse.ArgumentParser:
             "diagnose-reproduction",
             "historical-control",
             "corrected-baseline",
+            "corrected-historical-control",
         ),
     )
     parser.add_argument("--model-path", required=True, type=Path)
     parser.add_argument(
         "--candidate",
         required=True,
-        choices=(SMOKE_CANDIDATE, HISTORICAL_CANDIDATE, CORRECTED_CANDIDATE),
+        choices=(
+            SMOKE_CANDIDATE,
+            HISTORICAL_CANDIDATE,
+            CORRECTED_CANDIDATE,
+            CORRECTED_HISTORICAL_CANDIDATE,
+        ),
     )
     parser.add_argument("--seed", type=int)
     parser.add_argument("--seeds", nargs="+", type=int)
@@ -308,6 +321,41 @@ def validate_corrected_baseline_arguments(
     return model_path, output_path
 
 
+def validate_corrected_historical_control_arguments(
+    args: argparse.Namespace, root: Path
+) -> tuple[Path, Path]:
+    """Require the exact schema-corrected control with the historical V3 schedule."""
+    if args.mode != "corrected-historical-control":
+        raise ValueError(
+            "Corrected historical control requires --mode corrected-historical-control"
+        )
+    if (
+        args.candidate != CORRECTED_HISTORICAL_CANDIDATE
+        or args.max_length != HISTORICAL_MAXIMUM_LENGTH
+    ):
+        raise ValueError(
+            "Corrected historical control requires "
+            "v4_schema_corrected_historical_schedule at length 512"
+        )
+    if args.seed is not None or args.max_steps is not None:
+        raise ValueError("Corrected historical control does not accept --seed or --max-steps")
+    if tuple(args.seeds or ()) != VALIDATION_SEEDS:
+        raise ValueError(
+            "Corrected historical control requires --seeds 17 29 43 in that order"
+        )
+    if args.folds != FOLD_COUNT:
+        raise ValueError("Corrected historical control requires --folds 5")
+    model_path = require_approved_model_path(root, args.model_path)
+    output_path = require_smoke_output_path(root, args.output_dir)
+    expected_output = (artifact_root(root) / CORRECTED_HISTORICAL_OUTPUT_NAME).resolve()
+    if output_path != expected_output:
+        raise ValueError(
+            "Corrected historical control output must be "
+            "artifacts/v4/schema_corrected_historical_schedule"
+        )
+    return model_path, output_path
+
+
 def route_coverage_audit(
     labels: Any,
     context_flags: Any,
@@ -355,7 +403,11 @@ def route_coverage_audit(
 
 def retain_selected_checkpoint(mode: str, seed: int, fold: int) -> bool:
     """Apply the compact retention policy only to its predeclared experiment modes."""
-    if mode not in {"historical-control", "corrected-baseline"}:
+    if mode not in {
+        "historical-control",
+        "corrected-baseline",
+        "corrected-historical-control",
+    }:
         return True
     return seed == VALIDATION_SEEDS[0] and fold == 1
 
@@ -668,8 +720,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
 
     historical = args.mode == "historical-control"
     corrected = args.mode == "corrected-baseline"
+    corrected_historical = args.mode == "corrected-historical-control"
     if historical:
         model_path, output_path = validate_historical_control_arguments(args, root)
+    elif corrected_historical:
+        model_path, output_path = validate_corrected_historical_control_arguments(args, root)
     elif corrected:
         model_path, output_path = validate_corrected_baseline_arguments(args, root)
     else:
@@ -694,7 +749,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         }
         candidate_name = HISTORICAL_CANDIDATE
     else:
-        config = V4TrainingConfig(maximum_length=args.max_length)
+        config = (
+            corrected_historical_control_config()
+            if corrected_historical
+            else V4TrainingConfig(maximum_length=args.max_length)
+        )
         prepared = prepare_experiment(
             frame,
             tokenizer,
@@ -709,7 +768,13 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             tuple(range(len(frame))),
         )
         truncation_summary = prepared.truncation_summary
-        candidate_name = CORRECTED_CANDIDATE if corrected else SMOKE_CANDIDATE
+        candidate_name = (
+            CORRECTED_HISTORICAL_CANDIDATE
+            if corrected_historical
+            else CORRECTED_CANDIDATE
+            if corrected
+            else SMOKE_CANDIDATE
+        )
     del preparation_model, tokenizer
     gc.collect()
     cleanup_cuda()
@@ -719,7 +784,8 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
     group_ids = np.asarray(folds.audit.group_ids, dtype=object)
     contexts = np.asarray(all_encoded.context_present, dtype=bool)
     route_audit = None
-    if corrected:
+    schema_corrected = corrected or corrected_historical
+    if schema_corrected:
         independently_detected = np.asarray(context_presence(frame), dtype=bool)
         if not np.array_equal(contexts, independently_detected):
             raise RuntimeError("Corrected route flags differ between preparation and routing")
@@ -757,7 +823,11 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
             checkpoint,
             seed=fold.seed,
             config=config,
-            checkpoint_selection="final_epoch" if historical else "best_validation",
+            checkpoint_selection=(
+                "final_epoch"
+                if historical or corrected_historical
+                else "best_validation"
+            ),
         )
         target = oof_by_seed[fold.seed]
         validation_indices = np.asarray(fold.validation_indices, dtype=np.int64)
@@ -912,7 +982,7 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "candidate_maximum_predicted_class_share_at_050": candidate_share,
         "candidate_accepted_at_050": candidate_share <= 0.90,
     }
-    if corrected:
+    if schema_corrected:
         threshold_report["route_threshold_diagnostics"] = route_threshold_diagnostics(
             truth,
             mean_probabilities,
@@ -937,12 +1007,21 @@ def run_reproduction(args: argparse.Namespace, root: Path) -> dict[str, Any]:
         "dataloader_workers": 0,
         "early_stopping": "none",
         "checkpoint_selection": (
-            "final_epoch_historical_v3_cv" if historical else config.checkpoint_policy
+            "final_epoch_historical_v3_cv"
+            if historical
+            else "final_epoch_4_historical_schedule"
+            if corrected_historical
+            else config.checkpoint_policy
         ),
         "checkpoint_retention": (
             "representative_seed_17_fold_1_only"
-            if historical or corrected
+            if historical or schema_corrected
             else "all_selected_fold_checkpoints"
+        ),
+        "interpretation": (
+            "Schema-corrected V4 preprocessing with the historical V3 training schedule."
+            if corrected_historical
+            else None
         ),
         "threshold_grid": list(config.threshold_grid),
         "git_commit": _git_commit(root),

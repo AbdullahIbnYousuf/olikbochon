@@ -8,9 +8,11 @@ import pytest
 from olikbochon.v3_data import GroupAudit
 from olikbochon.v4_runner import (
     CORRECTED_CANDIDATE,
+    CORRECTED_HISTORICAL_CANDIDATE,
     HISTORICAL_CANDIDATE,
     SMOKE_CANDIDATE,
     build_cli_parser,
+    corrected_historical_control_config,
     historical_control_config,
     official_training_path,
     require_approved_model_path,
@@ -19,6 +21,7 @@ from olikbochon.v4_runner import (
     route_coverage_audit,
     split_distribution,
     validate_corrected_baseline_arguments,
+    validate_corrected_historical_control_arguments,
     validate_diagnostic_arguments,
     validate_historical_control_arguments,
     validate_reproduction_arguments,
@@ -78,11 +81,13 @@ def test_v4_cli_help_exposes_only_the_bounded_interfaces() -> None:
     ):
         assert option in help_text
     assert (
-        "{smoke,reproduce,diagnose-reproduction,historical-control,corrected-baseline}"
+        "{smoke,reproduce,diagnose-reproduction,historical-control,corrected-baseline,"
+        "corrected-historical-control}"
         in help_text
     )
     assert (
-        f"{{{SMOKE_CANDIDATE},{HISTORICAL_CANDIDATE},{CORRECTED_CANDIDATE}}}"
+        f"{{{SMOKE_CANDIDATE},{HISTORICAL_CANDIDATE},{CORRECTED_CANDIDATE},"
+        f"{CORRECTED_HISTORICAL_CANDIDATE}}}"
         in help_text
     )
 
@@ -325,6 +330,8 @@ def test_corrected_baseline_retains_only_the_representative_checkpoint() -> None
     assert retain_selected_checkpoint("corrected-baseline", 17, 1)
     assert not retain_selected_checkpoint("corrected-baseline", 17, 2)
     assert not retain_selected_checkpoint("corrected-baseline", 29, 1)
+    assert retain_selected_checkpoint("corrected-historical-control", 17, 1)
+    assert not retain_selected_checkpoint("corrected-historical-control", 43, 5)
     assert retain_selected_checkpoint("reproduce", 29, 1)
 
 
@@ -357,3 +364,73 @@ def test_split_distribution_records_only_aggregate_route_and_label_counts() -> N
         "context_present": {"rows": 2, "label_0": 1, "label_1": 1},
         "context_absent": {"rows": 2, "label_0": 1, "label_1": 1},
     }
+
+
+def test_corrected_historical_control_is_exact_and_separate(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("artifacts/v4/\n", encoding="utf-8")
+    model = (tmp_path / "data" / "models" / "snapshot").resolve()
+    model.mkdir(parents=True)
+    output = (
+        tmp_path / "artifacts" / "v4" / "schema_corrected_historical_schedule"
+    ).resolve()
+    args = build_cli_parser().parse_args(
+        [
+            "--mode",
+            "corrected-historical-control",
+            "--model-path",
+            str(model),
+            "--candidate",
+            CORRECTED_HISTORICAL_CANDIDATE,
+            "--seeds",
+            "17",
+            "29",
+            "43",
+            "--folds",
+            "5",
+            "--max-length",
+            "512",
+            "--output-dir",
+            str(output),
+        ]
+    )
+    assert validate_corrected_historical_control_arguments(args, tmp_path) == (
+        model,
+        output,
+    )
+    args.max_length = 256
+    with pytest.raises(ValueError, match="length 512"):
+        validate_corrected_historical_control_arguments(args, tmp_path)
+    args.max_length = 512
+    args.seeds = [17, 43, 29]
+    with pytest.raises(ValueError, match="17 29 43 in that order"):
+        validate_corrected_historical_control_arguments(args, tmp_path)
+    args.seeds = [17, 29, 43]
+    args.folds = 4
+    with pytest.raises(ValueError, match="folds 5"):
+        validate_corrected_historical_control_arguments(args, tmp_path)
+    args.folds = 5
+    args.output_dir = (
+        tmp_path / "artifacts" / "v4" / "schema_corrected_baseline"
+    ).resolve()
+    with pytest.raises(ValueError, match="schema_corrected_historical_schedule"):
+        validate_corrected_historical_control_arguments(args, tmp_path)
+    args.output_dir = output
+    args.candidate = HISTORICAL_CANDIDATE
+    with pytest.raises(ValueError, match="v4_schema_corrected_historical_schedule"):
+        validate_corrected_historical_control_arguments(args, tmp_path)
+
+
+def test_corrected_historical_control_changes_only_the_schedule_variables() -> None:
+    baseline = V4TrainingConfig()
+    control = corrected_historical_control_config()
+    assert control.maximum_length == 512
+    assert control.field_budget.maximum_length == 512
+    assert control.epochs == 4
+    assert control.learning_rate == 1e-5
+    assert control.batch_size == baseline.batch_size == 8
+    assert control.gradient_accumulation == baseline.gradient_accumulation == 2
+    assert control.mixed_precision == baseline.mixed_precision == "fp16"
+    assert control.threshold_grid == baseline.threshold_grid
+    assert control.validation_seeds == baseline.validation_seeds == (17, 29, 43)
+    assert control.fold_count == baseline.fold_count == 5
+    assert control.official_only and baseline.official_only
