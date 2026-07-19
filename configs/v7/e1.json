@@ -1,0 +1,9 @@
+{
+  "experiment": "e1_exact_rule_candidate_i",
+  "status": "COMPLETE",
+  "context_present": "deterministic_normalized_exact_substring",
+  "context_absent": "candidate_i_combined_char_word_tfidf_plus_numeric",
+  "classifier_c_grid": [0.25, 1.0, 4.0],
+  "classification_thresholds": [0.40, 0.42, 0.44, 0.46, 0.48, 0.50, 0.52, 0.54, 0.56, 0.58, 0.60],
+  "selection": "outer_training_inner_grouped_oof_only"
+}

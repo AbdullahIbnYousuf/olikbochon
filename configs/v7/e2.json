@@ -1,0 +1,14 @@
+{
+  "experiment": "e2_evidence_conditioned_banglabert",
+  "status": "COMPLETE_NEGATIVE_ABLATION",
+  "checkpoint_revision_required": "9ce791f330578f50da6bc52b54205166fb5d1c8c",
+  "checkpoint_weight_sha256_required": "9d33f519f42705d54e65fc1601644a6f4562c3462f96943b32b4184536130f98",
+  "rejected_evidence_marker": "[NO_EVIDENCE]",
+  "atomic_claim_splitting": false,
+  "encoder_policy": "frozen_offline_mean_pooled",
+  "max_length": 192,
+  "batch_size": 8,
+  "classifier_c_grid": [0.1, 1.0, 10.0],
+  "classification_thresholds": [0.40, 0.42, 0.44, 0.46, 0.48, 0.50, 0.52, 0.54, 0.56, 0.58, 0.60],
+  "test_data_role": "not_accessed"
+}

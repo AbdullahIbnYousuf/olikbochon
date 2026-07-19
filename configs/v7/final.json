@@ -1,0 +1,12 @@
+{
+  "status": "FROZEN_VALIDATION_DECISION",
+  "selected_configuration": "v4a_hard_stop_fallback",
+  "reason": "E4 failed the predeclared promotion gate",
+  "validation_reference": "common-fold E0",
+  "retrieval_threshold": 0.25,
+  "classification_threshold": 0.5,
+  "probability_orientation": "probability_label_1_is_faithful_label_1",
+  "external_api_calls": 0,
+  "internet_required": false,
+  "test_data_role": "inference_only_after_freeze"
+}

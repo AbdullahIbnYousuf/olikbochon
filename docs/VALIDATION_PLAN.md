@@ -161,3 +161,24 @@ Promote a candidate only when gains appear across folds/seeds and both context r
 - Freeze the arm, threshold, configuration, and folds before final fitting or
   competition-test inference. A CUDA OOM may only trigger one complete phase
   restart under the locked smaller-batch configuration.
+
+## Version 4-A retrieval-reproduction contract
+
+- Authenticate official competition hashes before loading rows. Dynamically find
+  the `abyaadrafid/bnwiki` AA/AB/AC/AD layout, require at least 250 `wiki_*`
+  chunks, discard only byte-identical duplicate layouts, strictly parse every
+  selected chunk, and record the discovered count and aggregate bytes.
+- Report the public source method's ordinary no-context five-fold OOF cutoff
+  score as an explicitly optimistic `Original-method ... tuning estimate`.
+- Independently group exact normalized rows and every response sharing a
+  normalized prompt/context. Keep each family wholly inside one fold.
+- For the honest estimate, use five outer grouped folds. Select the Wikipedia
+  retrieval cutoff only through three-fold grouped CV inside each outer-training
+  portion, then apply it once to the untouched outer-validation fold.
+- Preserve the public method's predeclared 0.25 retrieval cutoff for final
+  reproduction artifacts; do not choose it from the leaderboard.
+- Save honest OOF and ID-aligned test label-1 probabilities only as ignored
+  Kaggle runtime artifacts for a future, separately specified V3 ensemble.
+- Test data may be loaded only after retrieval, validation, feature, classifier,
+  and cutoff decisions are frozen. Never display identifiers, test text,
+  retrieved passages, probabilities, or individual predictions.

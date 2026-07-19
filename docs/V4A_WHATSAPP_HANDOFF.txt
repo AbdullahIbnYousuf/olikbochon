@@ -1,0 +1,27 @@
+V4-A technical handoff (Bengali hallucination detection)
+
+V4-A scored 0.685 on Kaggle, up from V3's 0.525 (+0.160). It is our current best baseline, not a final winning system.
+
+How it works:
+- If official context exists, we keep it.
+- If context is missing, we search 62,150 usable Bengali Wikipedia articles from 301 chunks.
+- Search uses character TF-IDF (char_wb, 2-4 grams, max 50k features) on article title + first 800 body characters.
+- We use the top article only when similarity >= 0.25. Otherwise context stays empty.
+- We create exactly 8 features: context present, word overlap, all response numbers supported, number overlap, response has numbers, response is an exact context substring, response length, and context length.
+- StandardScaler + class-balanced logistic regression predicts faithful (1) vs hallucinated (0) at probability 0.50.
+
+Honest duplicate-aware grouped results:
+- Accuracy: 0.6889632107
+- Macro F1: 0.6872701508
+- Label-0 F1: 0.7102803738
+- Label-1 F1: 0.6642599278
+
+Kaggle test predictions: 1,664 label 0 and 852 label 1.
+
+Why it likely improved: missing-context rows gained Bengali evidence, and the classifier directly measures lexical/numeric support. The simple balanced model also has lower variance with only 299 labels.
+
+Main weaknesses: lexical retrieval is not semantic reasoning; it uses one article and only its first 800 characters; Wikipedia can miss facts; exact overlap features are weak on paraphrases; and 299 labels make validation uncertain.
+
+For the next GPU model, preserve genuine grouped OOF label-1 probabilities and ID-aligned test probabilities. Blend them with v4a_oof_probabilities.csv and v4a_test_probabilities.csv, choosing weights only from grouped OOF validation—not the leaderboard. V4-A can provide evidence-consistency signals while the GPU model handles semantics.
+
+A teammate's 69% is comparable only if it uses the same metric, split, and duplicate-aware validation procedure. Accuracy or a different/random split is not directly comparable with our grouped macro F1.

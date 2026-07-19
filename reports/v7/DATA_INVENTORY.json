@@ -1,0 +1,42 @@
+{
+  "datasets": [
+    {
+      "role": "official_labeled_train",
+      "path": "data/competition/dataset samples.json",
+      "rows": 299,
+      "columns": ["context", "prompt_bn", "response_bn", "label"],
+      "label_counts": {"0": 136, "1": 163},
+      "context_present_rows": 130,
+      "context_absent_rows": 169,
+      "observed_actual_null_contexts": 2,
+      "observed_textual_null_contexts": 167,
+      "sha256": "f1540e702761aa451245abb6b5dcc3934f8f3d16c5baa8851b41dbc66da24b28",
+      "contains_explicit_row_id": false
+    },
+    {
+      "role": "external_retrieval_corpus",
+      "name": "Wikimedia bnwiki pages-articles",
+      "version": "20260701",
+      "source_sha1": "fdcf44a8ec36fc8a82b1b7b9f44878c4cb6dcba9",
+      "license": "CC-BY-SA-4.0 and GFDL-1.3-or-later",
+      "v4_compatible_chunks": 400,
+      "v4_compatible_aggregate_bytes": 826876458,
+      "v4_usable_articles": 60876
+    }
+  ],
+  "competition_test_available": true,
+  "competition_test": {
+    "rows": 2516,
+    "columns": ["id", "context", "prompt_bn", "response_bn"],
+    "sha256": "db75049956c6fa00e4d9c476716ee34bc4cc17a737f52ada06d2c0f80d567b81",
+    "example_content_manually_inspected": false
+  },
+  "sample_submission": {
+    "rows": 2516,
+    "columns": ["id", "label"],
+    "sha256": "c02eaf0f12504c79cc2c8874cd012f4829bc1d2e00eea1ed0d50be1867541e55"
+  },
+  "competition_test_rows_accessed_during_model_selection": 0,
+  "public_5k_available": false,
+  "banglabert_checkpoint_available": true
+}

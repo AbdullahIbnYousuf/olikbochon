@@ -1,0 +1,9 @@
+{
+  "experiment": "e0_common_fold_v4a",
+  "status": "COMPLETE",
+  "retrieval_thresholds": [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40],
+  "classification_thresholds": [0.40, 0.42, 0.44, 0.46, 0.48, 0.50, 0.52, 0.54, 0.56, 0.58, 0.60],
+  "features": "verified_v4a_eight_lexical_numeric_features",
+  "selection": "outer_training_inner_grouped_oof_only",
+  "resource": "Wikimedia bnwiki pages-articles 20260701 AA/AB/AC/AD subset"
+}
