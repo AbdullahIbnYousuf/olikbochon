@@ -1,7 +1,9 @@
 .venv/
+.handoff_original/
+.handoff_bundle_clone/
 data/
 outputs/
-artifacts/kaggle/
+artifacts/
 .ipynb_checkpoints/
 __pycache__/
 *.py[cod]

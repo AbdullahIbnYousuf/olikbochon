@@ -1,0 +1,23 @@
+{
+  "preserved_v4a_source": ".handoff_original/olikbochon_handoff/artifacts/v4a",
+  "preserved_v4a_checksums_recorded": true,
+  "v7": {
+    "common_folds": {"rows": 897, "sha256": "969fd626b9a90590f89aaf3e8560df6f79010a248905e0ef44c010d61ef5f7a8"},
+    "e0": {"oof_rows": 897, "stack_rows": 3588, "models": 15, "oof_sha256": "d790fedf3ede1bfc37af47832d7eab31255ea4b2588bf49f07045b4332439196", "stack_sha256": "6798c7c7c4720b51bd0cffe13dfcc4d250c47a05153f20203a33953b933f6852"},
+    "e1": {"oof_rows": 897, "stack_rows": 3588, "models": 15, "oof_sha256": "512ec88ce1bfe59077a4eee98e47ab0a6af03d032048275c73f888bdc5f8f0d3", "stack_sha256": "7d0d1bfb38044cabe7194352c54a53ff9063e6ff1dc8e6b0d610211c2ea0ccf9"},
+    "e2": {"oof_rows": 897, "stack_rows": 3588, "models": 15, "oof_sha256": "f70b1b6632126936956994cb24f706f8fff44658da677fc7ff7684ea267f367f", "stack_sha256": "dd834e64798cefa335cf31c4cab0faa03a62e99d1e340ebbaa194848554c2e3c"},
+    "e3": {"oof_rows": 897, "models": 0, "oof_sha256": "b0fa4b212ee58b2a4f5770f07fadffab879c0d58b5ed2a76bed7645f2c22e87e"},
+    "e4": {"oof_rows": 897, "models": 15, "oof_sha256": "500d260d9f93bf117b9da561fc149cd055e4530dad4b7808139a26c08730ae6b", "base_matrix_sha256": "15d3ec5288cc5db8a6dcfd6486b6cc6ee8249f6df1bdb9ef428de14e3d014715"},
+    "retrieval_cache": {"rows": 299, "test_rows_accessed": 0, "sha256": "2368464e5d9823e0ae9174dd99ad5e44c9681f139d0a5dc6dfed4d707da183de"}
+  },
+  "final": {
+    "selected_configuration": "v4a_hard_stop_fallback",
+    "test_probabilities_rows": 2516,
+    "test_probabilities_sha256": "2dd5ffa97c285727143fefe7d172bd02588368b7c3ff111088709ce0eb27adc2",
+    "submission_rows": 2516,
+    "submission_sha256": "bdfcd907177fb35537ae33998c6427f65d3ce574d18f82ee3e656bdb4ee2fa19",
+    "kaggle_public_score": 0.685,
+    "improvement_over_v4a": 0.0
+  },
+  "submission_generated": true
+}

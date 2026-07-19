@@ -1,0 +1,6 @@
+{
+  "experiment": "e3_deterministic_route_blend",
+  "status": "COMPLETE",
+  "allowed_rule_space": "small_predeclared_route_rules_only",
+  "legacy_v4a_oof_allowed": false
+}

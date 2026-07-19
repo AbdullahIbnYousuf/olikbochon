@@ -1,0 +1,15 @@
+{
+  "id": "mostafij155546/olikbochon-qwen14b-validation",
+  "title": "Olikbochon Qwen14b Validation",
+  "code_file": "olikbochon_qwen14b_validation.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "machine_shape": "NvidiaTeslaP100",
+  "dataset_sources": [],
+  "competition_sources": ["bengali-hallucination"],
+  "kernel_sources": [],
+  "model_sources": ["qwen-lm/qwen-3/transformers/14b-awq/1"]
+}

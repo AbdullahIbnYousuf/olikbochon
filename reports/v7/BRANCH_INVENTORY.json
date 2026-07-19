@@ -1,0 +1,12 @@
+{
+  "audit_date": "2026-07-19",
+  "bundle_complete_history": true,
+  "bundle_v4a_head": "c79a68f522437ff849a843916f5b065d5305a9b4",
+  "bundle_research_head": "5ef12783032f8c70aeb2f5c3e595c58ce429a0de",
+  "bundle_merge_base": "ab29d53c8530255a56637526d4edf033c0ebfe3a",
+  "workspace_original_v4a_head": "ddd40b6bcad272f036be941b35fcf1c715f00abd",
+  "workspace_later_research_head": "48239e5ba872c3ab833261a0b44a39962a44f909",
+  "integration_branch": "feat/v7-compatible-hybrid",
+  "integration_base": "c79a68f522437ff849a843916f5b065d5305a9b4",
+  "research_branch_merged_wholesale": false
+}

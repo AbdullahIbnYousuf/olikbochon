@@ -1,0 +1,11 @@
+{
+  "label_0_meaning": "hallucinated",
+  "label_1_meaning": "faithful",
+  "probability_orientation": "probability_label_1_is_faithful",
+  "outer_seeds": [17, 29, 43],
+  "outer_folds": 5,
+  "inner_folds": 3,
+  "grouping": "strengthened_v5_duplicate_identity_graph",
+  "stable_alignment": "content_derived_training_row_id",
+  "test_data_allowed_during_selection": false
+}

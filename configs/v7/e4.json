@@ -1,0 +1,8 @@
+{
+  "experiment": "e4_nested_logistic_stack",
+  "status": "REJECTED_BY_GATE",
+  "logistic_c_grid": [0.1, 1.0, 10.0],
+  "classification_thresholds": [0.40, 0.42, 0.44, 0.46, 0.48, 0.50, 0.52, 0.54, 0.56, 0.58, 0.60],
+  "required_base_provenance": "outer_train_inner_grouped_cross_fit",
+  "legacy_incompatible_oof_allowed": false
+}
